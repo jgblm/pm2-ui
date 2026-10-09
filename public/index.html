@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>pm2-ui · PM2 进程与端口监控</title>
+<link rel="stylesheet" href="./style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📡</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">PM</div>
+    <div>
+      <h1>PM2 进程与端口监控</h1>
+      <p class="sub" id="hostLine">正在连接…</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <div class="pm2-badge" id="pm2Badge">
+      <span class="dot"></span><span id="pm2Text">检测中</span>
+    </div>
+    <button class="btn ghost" id="refreshBtn" title="立即刷新">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z" fill="currentColor"/></svg>
+      刷新
+    </button>
+    <label class="switch" title="开启后每 3 秒自动刷新">
+      <input type="checkbox" id="autoRefresh" checked />
+      <span class="track"><span class="knob"></span></span>
+      <span class="switch-label">自动</span>
+    </label>
+  </div>
+</header>
+
+<section class="statbar" id="statbar"></section>
+
+<section class="toolbar">
+  <div class="search">
+    <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z" fill="currentColor"/></svg>
+    <input type="text" id="searchInput" placeholder="搜索进程名、脚本路径、端口…" />
+  </div>
+  <div class="chips" id="filterChips">
+    <button class="chip active" data-filter="all">全部</button>
+    <button class="chip" data-filter="online">运行中</button>
+    <button class="chip" data-filter="stopped">已停止</button>
+    <button class="chip" data-filter="ports">有监听端口</button>
+  </div>
+  <button class="btn primary" id="addBtn">＋ 启动新进程</button>
+</section>
+
+<main id="grid" class="grid"></main>
+
+<div class="empty" id="emptyState" hidden>
+  <div class="empty-icon">📡</div>
+  <h2>还没有任何 PM2 进程</h2>
+  <p>点击右上角「启动新进程」，或运行 <code>npm run demo:start</code> 启动几个演示应用看看效果。</p>
+</div>
+
+<!-- 日志抽屉 -->
+<div class="drawer-mask" id="drawerMask" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="drawer-head">
+    <div>
+      <strong id="drawerTitle">日志</strong>
+      <span class="muted small" id="drawerSub"></span>
+    </div>
+    <div class="drawer-tools">
+      <label class="mini-switch"><input type="checkbox" id="liveLog" checked /> 实时</label>
+      <button class="btn ghost sm" id="clearLog">清屏</button>
+      <button class="btn ghost sm" id="closeDrawer">关闭</button>
+    </div>
+  </div>
+  <pre class="logview" id="logView"></pre>
+</aside>
+
+<!-- 启动新进程弹窗 -->
+<div class="modal-mask" id="modalMask" hidden>
+  <div class="modal">
+    <h3>启动新进程</h3>
+    <p class="muted small">使用 <code>pm2 start</code> 启动一个脚本或 ecosystem 配置文件。</p>
+    <label>脚本 / 配置文件路径<input id="fTarget" placeholder="/绝对路径/app.js 或 ecosystem.config.js" /></label>
+    <label>进程名称（可选）<input id="fName" placeholder="my-app" /></label>
+    <label>工作目录（可选）<input id="fCwd" placeholder="/绝对路径/project" /></label>
+    <label>端口（可选，会以 --port 传入）<input id="fPort" placeholder="3000" /></label>
+    <div class="modal-actions">
+      <button class="btn ghost" id="cancelAdd">取消</button>
+      <button class="btn primary" id="confirmAdd">启动</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="./app.js"></script>
+</body>
+</html>

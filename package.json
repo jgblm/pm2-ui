@@ -1,0 +1,57 @@
+{
+  "name": "pm2-ui",
+  "version": "1.0.0",
+  "description": "PM2 进程与端口监控面板：一条命令启动，自动探测每个进程监听的 TCP 端口",
+  "main": "server/index.js",
+  "bin": {
+    "pm2-ui": "bin/pm2-ui.js"
+  },
+  "files": [
+    "bin",
+    "server",
+    "public",
+    "scripts",
+    "demo",
+    "ecosystem.config.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/pm2-ui.js",
+    "dev": "node --watch server/index.js",
+    "demo:start": "node scripts/demo.js start",
+    "demo:stop": "node scripts/demo.js stop",
+    "check": "node --check bin/pm2-ui.js && node --check server/index.js && node --check server/pm2.js && node --check server/ports.js",
+    "prepublishOnly": "npm run check",
+    "link": "npm link"
+  },
+  "keywords": [
+    "pm2",
+    "pm2-ui",
+    "process-manager",
+    "process-monitor",
+    "port",
+    "ports",
+    "monitor",
+    "dashboard",
+    "web-ui",
+    "devops"
+  ],
+  "author": "jgblm",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgblm/pm2-ui.git"
+  },
+  "homepage": "https://github.com/jgblm/pm2-ui#readme",
+  "bugs": {
+    "url": "https://github.com/jgblm/pm2-ui/issues"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pm2": "^5.4.2"
+  }
+}

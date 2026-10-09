@@ -1,0 +1,8 @@
+node_modules/
+data/
+logs/
+.DS_Store
+*.log
+
+# 编辑器 / 工具内部数据
+.workbuddy/
