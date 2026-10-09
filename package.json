@@ -10,8 +10,8 @@
     "bin",
     "server",
     "public",
-    "scripts",
     "demo",
+    "scripts/demo.js",
     "ecosystem.config.js",
     "README.md",
     "LICENSE"
