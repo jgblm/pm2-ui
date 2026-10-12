@@ -17,6 +17,11 @@ const state = {
   logStream: null,
   logTarget: null,
   editing: null,           // 正在编辑的任务名
+  update: null,            // 版本 / 更新检查结果
+  updateAutoCheck: true,   // 服务端是否允许自动检查更新
+  updateChecked: false,
+  updateStream: null,      // 更新日志的 SSE
+  updating: false,
 };
 
 /* ------------------------------ 工具 ------------------------------ */
@@ -87,6 +92,7 @@ async function load({ silent = false } = {}) {
     state.overview = oRes;
     state.processes = pRes.processes || [];
     state.apps = aRes.apps || [];
+    if (oRes.update) applyUpdateInfo(oRes.update);
 
     if (oRes.error) toast('PM2 读取失败：' + oRes.error, 'err');
 
@@ -592,6 +598,182 @@ function appendLog(text, kind) {
   if (atBottom) view.scrollTop = view.scrollHeight;
 }
 
+/* --------------------------- 版本与更新 --------------------------- */
+
+/** overview 里带回来的更新状态：有结果直接用，没有就按需查一次 */
+function applyUpdateInfo(u) {
+  if (u.info) {
+    state.update = u.info;
+    renderUpdateChip();
+  } else if (u.autoCheck && !state.updateChecked) {
+    state.updateChecked = true;
+    checkUpdate();
+  }
+  if (typeof u.autoCheck === 'boolean') state.updateAutoCheck = u.autoCheck;
+}
+
+function renderUpdateChip() {
+  const u = state.update;
+  const mgr = state.overview && state.overview.manager;
+  const ver = (u && u.current) || (mgr && mgr.version) || '';
+  $('versionText').textContent = ver ? 'v' + ver : 'v—';
+
+  const has = Boolean(u && u.hasUpdate);
+  $('versionBtn').classList.toggle('has-update', has);
+  $('updateDot').hidden = !has;
+  $('versionBtn').title = has
+    ? `发现新版本 v${u.latest}，点击一键更新`
+    : (u && u.error ? '更新检查失败：' + u.error : '版本与更新');
+}
+
+function setUpdateStatus(text) {
+  $('uStatus').textContent = text;
+}
+
+async function checkUpdate(force = false) {
+  const btn = $('versionBtn');
+  btn.classList.add('checking');
+  if (!$('updateMask').hidden) setUpdateStatus('正在检查最新版本…');
+  try {
+    const j = await fetch('/api/update/check' + (force ? '?force=1' : '')).then((r) => r.json());
+    if (!j.ok) throw new Error(j.error || '检查失败');
+    state.update = j;
+  } catch (e) {
+    state.update = { ...(state.update || {}), error: e.message };
+  } finally {
+    state.updateChecked = true;
+    btn.classList.remove('checking');
+    renderUpdateChip();
+    if (!$('updateMask').hidden) renderUpdateModal();
+  }
+}
+
+function renderUpdateModal() {
+  const u = state.update || {};
+  $('uCurrent').textContent = 'v' + (u.current || '—');
+  $('uLatest').textContent = u.latest ? 'v' + u.latest : '—';
+  $('uLatest').className = u.hasUpdate ? 'new' : '';
+  $('uMode').textContent = u.modeLabel || u.mode || '—';
+
+  if (!u.latest) {
+    setUpdateStatus(u.error ? '无法获取最新版本：' + u.error : '正在检查最新版本…');
+  } else if (u.hasUpdate) {
+    setUpdateStatus(`发现新版本 v${u.latest}（当前 v${u.current}），可以一键更新`);
+  } else {
+    setUpdateStatus('已经是最新版本');
+  }
+
+  $('uPlan').textContent = u.canUpdate
+    ? (u.planText || '')
+    : (u.reason || '当前安装方式不支持自动更新');
+
+  const apply = $('uApply');
+  apply.disabled = state.updating || !u.canUpdate || !u.hasUpdate;
+  apply.textContent = state.updating ? '更新中…' : '立即更新';
+  $('uCheck').disabled = state.updating;
+}
+
+function openUpdate() {
+  $('uLog').hidden = !$('uLog').textContent;
+  $('updateMask').hidden = false;
+  renderUpdateModal();
+  if (!state.update) checkUpdate(true);
+}
+
+function closeUpdate() {
+  $('updateMask').hidden = true;
+}
+
+function appendUpdateLine(text, kind) {
+  const log = $('uLog');
+  log.hidden = false;
+  const span = document.createElement('span');
+  span.className = 'l-' + (kind === 'err' ? 'err' : kind === 'sys' ? 'sys' : 'out');
+  span.textContent = text + '\n';
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+}
+
+/** 执行更新：走 SSE 拿实时输出 */
+async function applyUpdate() {
+  if (state.updating) return;
+  if (!confirm('确定更新到最新版本吗？\n（会执行对应更新命令，完成后需要重启面板才会生效）')) return;
+
+  state.updating = true;
+  $('uLog').textContent = '';
+  $('uLog').hidden = false;
+  $('uRestart').hidden = true;
+  setUpdateStatus('正在更新，请勿关闭页面…');
+  renderUpdateModal();
+
+  await new Promise((resolve) => {
+    const es = new EventSource('/api/update/apply?confirm=1');
+    state.updateStream = es;
+    let done = false;
+    // done 兜底：流结束后浏览器可能再补一个 error 事件，避免重复收尾
+    const finish = (r) => {
+      if (done) return;
+      done = true;
+      es.close();
+      state.updateStream = null;
+      finishUpdate(r).finally(resolve);
+    };
+    es.onmessage = (ev) => {
+      let data;
+      try { data = JSON.parse(ev.data); } catch (_) { return; }
+      if (data.ping) return;
+      if (data.done) return finish(data);
+      if (data.text) appendUpdateLine(data.text, data.kind);
+    };
+    es.onerror = () => finish({ ok: false, error: '更新连接中断，请查看服务端终端输出确认结果' });
+  });
+}
+
+async function finishUpdate(r) {
+  state.updating = false;
+  if (r.ok) {
+    appendUpdateLine(`✓ 更新完成：v${r.from} → v${r.to}`, 'sys');
+    toast(r.changed ? `已更新到 v${r.to}，重启面板后生效` : '更新命令执行完毕', 'ok');
+    $('uRestart').hidden = false;
+    await checkUpdate(true);
+    setUpdateStatus(r.changed
+      ? `v${r.to} 已就位，重启面板后生效`
+      : '已是最新版本，无需更新');
+  } else {
+    appendUpdateLine('✗ ' + (r.error || '更新失败'), 'err');
+    toast('更新失败：' + (r.error || '未知错误'), 'err');
+  }
+  renderUpdateModal();
+}
+
+/** 重启面板（pm2 托管时直接 pm2 restart 自己） */
+async function restartPanel() {
+  const btn = $('uRestart');
+  btn.disabled = true;
+  try {
+    const j = await post('/api/update/restart');
+    if (j.ok && j.mode === 'pm2') {
+      setUpdateStatus('面板正在重启，稍后自动刷新页面…');
+      toast('已触发 pm2 重启，6 秒后自动刷新', 'ok');
+      setTimeout(() => location.reload(), 6000);
+      return;
+    }
+    setUpdateStatus(j.message || '请手动重启面板');
+    toast(j.message || '请在终端里重启面板', '');
+  } catch (e) {
+    toast('重启失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('versionBtn').addEventListener('click', openUpdate);
+$('uClose').addEventListener('click', closeUpdate);
+$('uCheck').addEventListener('click', () => checkUpdate(true));
+$('uApply').addEventListener('click', applyUpdate);
+$('uRestart').addEventListener('click', restartPanel);
+$('updateMask').addEventListener('click', (e) => { if (e.target.id === 'updateMask') closeUpdate(); });
+
 /* ------------------------------ 事件绑定 ------------------------------ */
 
 document.addEventListener('click', (e) => {
@@ -667,6 +849,7 @@ document.addEventListener('keydown', (e) => {
     $('modalMask').hidden = true;
     closeEdit();
     closeLogs();
+    closeUpdate();
   }
 });
 
@@ -678,3 +861,6 @@ function setupTimer() {
 /* ------------------------------ 启动 ------------------------------ */
 load();
 setupTimer();
+
+// 面板长时间开着时，每 30 分钟重新看一眼有没有新版本
+setInterval(() => { if (state.updateAutoCheck) checkUpdate(); }, 30 * 60 * 1000);

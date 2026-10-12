@@ -98,6 +98,59 @@ code { font-family: var(--mono); font-size: .92em; background: var(--bg-soft); p
 .pm2-badge.bad { background: var(--danger-soft); border-color: #f6c9ca; color: #b3252a; }
 .pm2-badge.bad .dot { background: var(--danger); }
 
+/* --------------------------- 版本 / 更新 --------------------------- */
+
+.version-chip {
+  position: relative;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+}
+.version-chip.has-update {
+  color: #a15c05;
+  background: var(--warn-soft);
+  border-color: #f0d6ab;
+}
+.version-chip.has-update:hover { background: #fbead2; }
+.version-chip .update-dot {
+  display: inline-flex; align-items: center;
+  font-family: inherit; font-size: 11px; font-weight: 650;
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--warn); color: #fff;
+}
+.version-chip.checking { opacity: .6; }
+
+.ver-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  margin-top: 14px;
+}
+.ver-cell {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  min-width: 0;
+}
+.ver-cell.wide { grid-column: 1 / -1; }
+.ver-cell .k { display: block; font-size: 10.5px; color: var(--muted); font-weight: 600; letter-spacing: .3px; }
+.ver-cell b {
+  display: block; margin-top: 3px;
+  font-family: var(--mono); font-size: 13.5px; font-weight: 650;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ver-cell b.new { color: var(--ok); }
+
+.update-log {
+  margin: 12px 0 0;
+  max-height: 220px; overflow: auto;
+  background: #10131a; color: #cbd3e1;
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+
 /* ------------------------------ 按钮 ------------------------------ */
 
 .btn {
@@ -523,6 +576,7 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
   box-shadow: var(--shadow-lg);
   animation: pop .18s ease;
 }
+.modal.lg { width: min(560px, 94vw); }
 @keyframes pop { from { transform: scale(.97); opacity: .6; } to { transform: none; opacity: 1; } }
 .modal h3 { margin: 0 0 4px; font-size: 16px; font-weight: 640; }
 .modal label { display: block; margin-top: 14px; font-size: 12.5px; color: var(--text-2); font-weight: 550; }

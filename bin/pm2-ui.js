@@ -14,6 +14,7 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = require(path.join(ROOT, 'package.json'));
+const updater = require(path.join(ROOT, 'server', 'update.js'));
 
 // 明确的前置条件检查：shebang 用的是 env node，PATH 里的 node 可能太老
 const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
@@ -40,6 +41,8 @@ const HELP = `
         --open            启动后自动打开浏览器
         --demo            启动前先拉起演示进程
         --install         缺依赖时自动执行 npm install
+        --check-update    只检查有没有新版本，不做任何改动
+        --update          更新到最新版本并退出（面板里也能一键更新）
     -v, --version         打印版本号
     -h, --help            显示本帮助
 
@@ -48,10 +51,16 @@ const HELP = `
     pm2-ui 8080                   直接写端口号也行
     pm2-ui --host 0.0.0.0 --open  局域网访问并自动开浏览器
     pm2-ui --demo                 顺便起 3 个演示进程看看效果
+    pm2-ui --check-update         看看是不是有新版本
+    pm2-ui --update               升级到最新版
 `;
 
 function parseArgs(argv) {
-  const opts = { port: null, host: null, pm2: null, open: false, demo: false, install: false };
+  const opts = {
+    port: null, host: null, pm2: null,
+    open: false, demo: false, install: false,
+    update: false, checkUpdate: false,
+  };
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -67,6 +76,8 @@ function parseArgs(argv) {
       case '--open': opts.open = true; break;
       case '--demo': opts.demo = true; break;
       case '--install': opts.install = true; break;
+      case '--update': case '--upgrade': opts.update = true; break;
+      case '--check-update': case '--check': opts.checkUpdate = true; break;
       case '-v': case '--version': opts.version = true; break;
       case '-h': case '--help': opts.help = true; break;
       default:
@@ -117,6 +128,53 @@ function runDemo() {
   }
 }
 
+/* ------------------------------ 自更新 ------------------------------ */
+
+function showVersionInfo(info) {
+  const line = (k, v) => `  \x1b[2m${k}\x1b[0m  ${v}`;
+  console.log('');
+  console.log(line('当前版本', `v${info.current}`));
+  console.log(line('最新版本', info.latest ? `v${info.latest}` : '查询失败'));
+  console.log(line('安装方式', info.modeLabel));
+  if (info.canUpdate) console.log(line('更新命令', info.planText));
+  console.log('');
+}
+
+/** pm2-ui --check-update */
+async function runCheckUpdate() {
+  const info = await updater.check({ force: true });
+  showVersionInfo(info);
+  if (info.error) {
+    console.log(`  \x1b[33m! 无法访问 registry：${info.error}\x1b[0m\n`);
+  } else if (info.hasUpdate) {
+    console.log(`  \x1b[33m↑ 有新版本，执行 pm2-ui --update 升级\x1b[0m\n`);
+  } else {
+    console.log('  \x1b[32m✓ 已经是最新版本\x1b[0m\n');
+  }
+}
+
+/** pm2-ui --update */
+async function runUpdate() {
+  const info = await updater.check({ force: true });
+  showVersionInfo(info);
+  if (!info.canUpdate) return fail(info.reason || '当前安装方式不支持自动更新');
+  if (!info.hasUpdate) {
+    console.log('  \x1b[32m✓ 已经是最新版本，无需更新\x1b[0m\n');
+    return;
+  }
+
+  console.log(`  正在更新 v${info.current} → v${info.latest}…\n`);
+  let out;
+  try {
+    out = await updater.apply({ onLine: (text) => console.log('  \x1b[2m│\x1b[0m ' + text) });
+  } catch (e) {
+    return fail('更新失败：' + e.message);
+  }
+  console.log('');
+  console.log(`  \x1b[32m✓ 更新完成\x1b[0m：v${out.from} → v${out.to}`);
+  console.log('  \x1b[2m面板正在运行时请重启它（或在面板里点「重启面板」）以加载新版本\x1b[0m\n');
+}
+
 /* -------------------------------- 主流程 -------------------------------- */
 
 async function main() {
@@ -124,6 +182,10 @@ async function main() {
 
   if (opts.help) { console.log(HELP); return; }
   if (opts.version) { console.log(pkg.version); return; }
+
+  // 自更新：不依赖 express，所以放在依赖检查之前
+  if (opts.checkUpdate) return runCheckUpdate();
+  if (opts.update) return runUpdate();
 
   // 缺依赖时：交互式终端或显式 --install 就自动装，否则提示手动安装
   if (!hasExpress()) {
@@ -151,6 +213,20 @@ async function main() {
   }
 
   if (opts.open) openBrowser(started.url);
+
+  // 有新版本时顺手提示一句（异步，不阻塞启动，也不自动更新）
+  if (updater.AUTO_CHECK) {
+    updater.check()
+      .then((info) => {
+        if (!info.hasUpdate) return;
+        console.log(
+          `  \x1b[33m↑ 发现新版本 v${info.latest}\x1b[0m（当前 v${info.current}）\n` +
+          `    ${info.planText}\n` +
+          '    也可以在面板右上角点版本号一键更新\n'
+        );
+      })
+      .catch(() => { /* 检查失败就安静跳过 */ });
+  }
 
   const bye = () => {
     console.log('\n  已退出。\n');

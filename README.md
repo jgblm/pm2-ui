@@ -46,6 +46,8 @@ pm2-ui [选项]
       --open            启动后自动打开浏览器
       --demo            启动前先拉起演示进程
       --install         缺依赖时自动执行 npm install
+      --check-update    只检查有没有新版本，不做任何改动
+      --update          更新到最新版本并退出（面板里也能一键更新）
   -v, --version         打印版本号
   -h, --help            显示帮助
 ```
@@ -130,6 +132,32 @@ node bin/pm2-ui.js
 
 CPU、内存、重启次数、运行时长，外加 CPU 趋势迷你折线图（前端保留最近 40 个采样点）。
 
+### 6. 自更新
+
+面板自己也是个 npm 包，所以能自己检查、自己升级：
+
+- 顶栏右上角的版本号就是入口。有新版本时它会变橙并挂上「有新版本」角标；
+- 点开能看到 **当前版本 / 最新版本 / 本次会在哪个目录执行什么命令**，确认后一键更新，npm 的输出实时打进弹窗；
+- 更新完按提示「重启面板」加载新版本：面板由 pm2 托管时直接 `pm2 restart` 自己，否则告诉你在终端重启（不会把进程悄悄杀掉）。
+
+安装方式自动识别，不同方式执行的命令不同：
+
+| 运行方式 | 识别为 | 更新命令 |
+| --- | --- | --- |
+| `npm i -g pm2-ui` | 全局安装 | `npm install -g pm2-ui@latest` |
+| 某个项目的 `node_modules/pm2-ui` | 项目依赖 | 在宿主项目里 `npm install pm2-ui@latest` |
+| `npx pm2-ui` | npx 临时运行 | 不能就地更新，下次直接 `npx pm2-ui@latest` |
+| git 源码运行 | 源码检出 | `git pull --ff-only` + `npm install` |
+
+命令行里有等价的两条：
+
+```bash
+pm2-ui --check-update    # 只看版本，不改任何东西
+pm2-ui --update          # 更新到最新版（等价于 npm run update）
+```
+
+启动时若发现有新版本，终端也会顺手提示一句；不想让它联网检查就设 `PM2_UI_AUTO_UPDATE_CHECK=0`（面板里的「检查更新」按钮不受影响）。
+
 ---
 
 ## 常用配置
@@ -141,6 +169,9 @@ CPU、内存、重启次数、运行时长，外加 CPU 趋势迷你折线图（
 | `PM2_BIN` | 自动查找 | 指定 pm2 可执行文件路径（默认优先用项目内 `node_modules/.bin/pm2`） |
 | `PM2_UI_DATA_DIR` | `~/.pm2-ui` | 任务清单 `apps.json` 的存放目录 |
 | `PM2_UI_AUTOSAVE` | 开启 | 设为 `0` 关闭「操作后自动 `pm2 save`」 |
+| `PM2_UI_AUTO_UPDATE_CHECK` | 开启 | 设为 `0` 关闭启动时的自动更新检查（面板里的「检查更新」仍可用） |
+| `PM2_UI_UPDATE_REGISTRY` | `https://registry.npmjs.org` | 查询版本用的 registry，可换成私有源或镜像 |
+| `PM2_UI_UPDATE_TIMEOUT` | `8000` | 查询最新版本的超时（毫秒） |
 
 用 pm2 托管管理台自己：
 
@@ -168,7 +199,8 @@ pm2-ui --demo
 │   ├── index.js      # Express 服务 + REST API + SSE 日志流，导出 start()
 │   ├── pm2.js        # pm2 CLI 封装（jlist / restart / logs / save / resurrect…）
 │   ├── store.js      # ★ 任务清单持久化：收录启动参数、还原 pm2 start 命令
-│   └── ports.js      # ★ 端口探测与用途判定
+│   ├── ports.js      # ★ 端口探测与用途判定
+│   └── update.js     # ★ 自更新：识别安装方式、查最新版本、执行更新
 ├── public/           # 前端（原生 JS，无构建步骤）
 ├── demo/             # 演示进程：api-server / dashboard / worker
 ├── scripts/demo.js   # 演示进程一键启停
@@ -192,12 +224,17 @@ pm2-ui --demo
 | DELETE | `/api/apps/:name` | 从任务清单移除（不动 pm2 里正在跑的进程） |
 | POST | `/api/pm2/save` | 执行 `pm2 save`，返回 dump 状态 |
 | POST | `/api/pm2/resurrect` | 执行 `pm2 resurrect`，按 dump 恢复进程 |
+| GET | `/api/update/check` | 检查最新版本（`?force=1` 强制重查），含识别出的安装方式与更新命令 |
+| GET | `/api/update/apply` | 执行自更新，SSE 流式返回命令输出（需 `?confirm=1`） |
+| POST | `/api/update/restart` | 重启面板以加载新版本（pm2 托管时自动 `pm2 restart` 自己） |
 
 ---
 
 ## 说明与边界
 
 - 端口探测每 20 秒缓存一次，避免频繁 `lsof`；进程列表本身有 1.2 秒短缓存。
+- 更新检查同样有缓存（5 分钟一次），且**只做 GET 查询**，不会自动更新；真升级要你在面板上点一次「立即更新」（对应接口要求 `confirm=1`）。同一时刻只允许一次更新在执行。
+- 自更新动的是 `pm2-ui` 自己的代码，不碰 pm2 里跑的任何业务进程。
 - 默认只绑定 `127.0.0.1`，因为这个面板可以启停进程、相当于一个"远程控制台"。若要暴露到局域网，请自行加一层反向代理与鉴权。
 - `pm2 delete` 只把进程移出 pm2 列表，不会删除任何文件。
 - **两件事要分清**：关掉再打开 `pm2-ui` 面板本身，不影响 pm2 里跑着的进程；真正会让进程"消失"的是 pm2 守护进程被重启（例如换用不同版本的 pm2、`pm2 kill`、机器重启）。任务清单针对的正是后一种情况。

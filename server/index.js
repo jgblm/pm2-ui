@@ -17,6 +17,8 @@ const os = require('os');
 const pm2 = require('./pm2');
 const { resolvePorts } = require('./ports');
 const store = require('./store');
+const updater = require('./update');
+const pkg = require('../package.json');
 
 const app = express();
 const ROOT = path.join(__dirname, '..');
@@ -147,7 +149,14 @@ app.get('/api/overview', async (req, res) => {
     host: os.hostname(),
     platform: `${os.platform()} ${os.release()} (${os.arch()})`,
     lan: lanAddresses(),
-    manager: { port: listeningPort, pid: process.pid, node: process.version, uptime: process.uptime() },
+    manager: {
+      port: listeningPort,
+      pid: process.pid,
+      node: process.version,
+      uptime: process.uptime(),
+      version: pkg.version,
+    },
+    update: { autoCheck: updater.AUTO_CHECK, info: updater.cached() },
     dump: pm2.dumpInfo(),
     autosave: AUTOSAVE,
     apps: { total: store.list().length },
@@ -359,6 +368,75 @@ app.post('/api/pm2/resurrect', async (req, res) => {
   }
 });
 
+/* ------------------------------ 自更新 ------------------------------ */
+
+/** 检查是否有新版本（带缓存，?force=1 强制重查） */
+app.get('/api/update/check', async (req, res) => {
+  try {
+    const info = await updater.check({ force: req.query.force === '1' });
+    res.json({ ok: true, ...info });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+/**
+ * 执行自更新，输出以 SSE 流式推送。
+ * 用 GET 是因为 EventSource 不支持 POST；因此要求带 confirm=1，
+ * 避免被浏览器的预取 / 误访问直接触发一次 npm install。
+ */
+app.get('/api/update/apply', async (req, res) => {
+  if (req.query.confirm !== '1') {
+    return res.status(400).json({ ok: false, error: '缺少确认参数，请从面板点「立即更新」' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+
+  let closed = false;
+  const send = (payload) => {
+    if (closed) return;
+    try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch (_) { /* 连接已断 */ }
+  };
+  const keepAlive = setInterval(() => send({ ping: true }), 15000);
+  req.on('close', () => { closed = true; clearInterval(keepAlive); });
+
+  try {
+    const out = await updater.apply({ onLine: (text, kind) => send({ text, kind }) });
+    send({ done: true, ...out });
+  } catch (e) {
+    send({ done: true, ok: false, error: String(e.message || e) });
+  } finally {
+    clearInterval(keepAlive);
+    if (!closed) res.end();
+  }
+});
+
+/** 重启面板以加载新版本（pm2 托管时直接 pm2 restart 自己） */
+app.post('/api/update/restart', async (req, res) => {
+  let name = null;
+  try { name = await updater.pm2HostName(); } catch (_) { /* 读不到就当没托管 */ }
+
+  if (!name) {
+    return res.json({
+      ok: false,
+      mode: 'manual',
+      message: '面板不是由 pm2 托管的：请回到终端按 Ctrl+C，再重新执行 pm2-ui 即可加载新版本',
+    });
+  }
+
+  // 先把响应发出去再重启：pm2 restart 会把本进程换掉，晚一步响应就丢了
+  res.json({ ok: true, mode: 'pm2', name, message: `已触发 pm2 restart ${name}，新版本正在启动` });
+  setTimeout(() => {
+    updater.restartSelf().catch(() => { /* 重启失败就让旧进程继续服务 */ });
+  }, 600);
+});
+
 /* 生产环境下的兜底路由 */
 app.get(/^\/(?!api\/).*/, (req, res) => {
   res.sendFile(path.join(ROOT, 'public', 'index.html'));
@@ -369,7 +447,7 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
 function banner(port, host) {
   const lines = [
     '',
-    '  \x1b[32m▍pm2-ui\x1b[0m  PM2 进程与端口监控  已启动',
+    '  \x1b[32m▍pm2-ui\x1b[0m  PM2 进程与端口监控  已启动' + ' \x1b[2mv' + pkg.version + '\x1b[0m',
     '',
     `  \x1b[1m本机访问\x1b[0m   \x1b[36mhttp://localhost:${port}\x1b[0m`,
   ];
@@ -400,6 +478,8 @@ function start(opts = {}) {
     });
     server.once('listening', () => {
       if (!opts.quiet) banner(port, host);
+      // 预热一次更新检查：面板一打开就能看到版本 / 更新提示，不阻塞启动
+      if (updater.AUTO_CHECK) updater.check().catch(() => { /* 没网也不影响使用 */ });
       resolve({ server, port, url: `http://localhost:${port}` });
     });
   });
