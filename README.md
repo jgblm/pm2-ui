@@ -1,11 +1,16 @@
 # pm2-ui
 
+**简体中文** | [English](./README.en.md)
+
 把 `pm2` 的进程列表搬进浏览器，并**自动列出每个进程真正监听的 TCP 端口**，标注端口用途。
 
 [![npm version](https://img.shields.io/npm/v/pm2-ui)](https://www.npmjs.com/package/pm2-ui)
 [![npm downloads](https://img.shields.io/npm/dm/pm2-ui)](https://www.npmjs.com/package/pm2-ui)
 ![node](https://img.shields.io/badge/node-%3E%3D16-12a150)
 ![license](https://img.shields.io/badge/license-MIT-blue)
+
+> 界面支持**简体中文 / English**，面板右上角可随时切换，默认跟随浏览器语言。
+> The dashboard ships with **简体中文 / English**; switch anytime from the top bar — the default follows your browser language.
 
 ---
 
@@ -158,6 +163,14 @@ pm2-ui --update          # 更新到最新版（等价于 npm run update）
 
 启动时若发现有新版本，终端也会顺手提示一句；不想让它联网检查就设 `PM2_UI_AUTO_UPDATE_CHECK=0`（面板里的「检查更新」按钮不受影响）。
 
+### 7. 界面语言（简体中文 / English）
+
+- 面板右上角的下拉框可即时切换语言，选择会记在浏览器里，下次打开仍生效；
+- 首次访问时按浏览器语言自动选择（`zh-*` → 中文，`en-*` → English，其余回落中文）；
+- 终端输出（CLI 帮助、启动横幅、演示脚本等）跟随 `PM2_UI_LANG`，未设置时读取系统语言（`LC_ALL` / `LC_MESSAGES` / `LANG`）；
+- 服务端返回的提示语按请求的 `?lang=` 或 `Accept-Language` 本地化，接口返回的文案与面板当前语言保持一致；
+- 演示应用（`--demo`）的页面也会跟随浏览器语言。
+
 ---
 
 ## 常用配置
@@ -172,6 +185,7 @@ pm2-ui --update          # 更新到最新版（等价于 npm run update）
 | `PM2_UI_AUTO_UPDATE_CHECK` | 开启 | 设为 `0` 关闭启动时的自动更新检查（面板里的「检查更新」仍可用） |
 | `PM2_UI_UPDATE_REGISTRY` | `https://registry.npmjs.org` | 查询版本用的 registry，可换成私有源或镜像 |
 | `PM2_UI_UPDATE_TIMEOUT` | `8000` | 查询最新版本的超时（毫秒） |
+| `PM2_UI_LANG` | 跟随系统语言 | 界面语言：`zh-CN` 或 `en-US`（终端输出与接口兜底文案都用它） |
 
 用 pm2 托管管理台自己：
 
@@ -200,11 +214,18 @@ pm2-ui --demo
 │   ├── pm2.js        # pm2 CLI 封装（jlist / restart / logs / save / resurrect…）
 │   ├── store.js      # ★ 任务清单持久化：收录启动参数、还原 pm2 start 命令
 │   ├── ports.js      # ★ 端口探测与用途判定
+│   ├── i18n.js       # ★ 服务端国际化：语言解析 + 中英文词典
 │   └── update.js     # ★ 自更新：识别安装方式、查最新版本、执行更新
 ├── public/           # 前端（原生 JS，无构建步骤）
+│   ├── index.html
+│   ├── style.css
+│   ├── i18n.js       # ★ 前端国际化：语言检测、词典、静态文案替换
+│   └── app.js
 ├── demo/             # 演示进程：api-server / dashboard / worker
 ├── scripts/demo.js   # 演示进程一键启停
 ├── scripts/dev/      # 仅用于无 pm2 守护进程环境的自测替身，运行时不依赖
+├── README.md         # 简体中文
+├── README.en.md      # English
 └── ecosystem.config.js
 ```
 

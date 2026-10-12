@@ -1,7 +1,7 @@
 /**
- * PM2 生态配置示例
- * 用法：
- *   pm2 start ecosystem.config.js          # 启动管理台自身
+ * PM2 生态配置示例 / PM2 ecosystem config example
+ * 用法 / Usage：
+ *   pm2 start ecosystem.config.js          # 启动管理台自身 / start the dashboard itself
  *   pm2 start ecosystem.config.js --only pm2-ui
  */
 module.exports = {

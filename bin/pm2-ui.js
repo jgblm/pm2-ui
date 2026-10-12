@@ -2,10 +2,12 @@
 'use strict';
 
 /**
- * pm2-ui —— 命令行入口
+ * pm2-ui —— 命令行入口 / CLI entry
  * ------------------------------------------------------------------
  * 在任意目录输入 `pm2-ui` 即可启动监控面板。
  * 通过 `npm link` 安装为全局命令，或在本目录用 `npx pm2-ui` / `npm start`。
+ *
+ * 界面语言 / UI language：PM2_UI_LANG=zh-CN|en-US，缺省时按系统语言推断。
  */
 
 const fs = require('fs');
@@ -14,46 +16,25 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = require(path.join(ROOT, 'package.json'));
+const i18n = require(path.join(ROOT, 'server', 'i18n.js'));
 const updater = require(path.join(ROOT, 'server', 'update.js'));
+
+const LANG = i18n.defaultLang();
+const t = i18n.translator(LANG);
 
 // 明确的前置条件检查：shebang 用的是 env node，PATH 里的 node 可能太老
 const NODE_MAJOR = Number(process.versions.node.split('.')[0]);
 if (NODE_MAJOR < 16) {
   console.error(
-    `\n  \x1b[31m✗ 需要 Node.js 16 或更高版本，当前是 v${process.versions.node}\x1b[0m\n` +
-    '    请升级 Node，或改用：/path/to/new/node ' + path.join(__dirname, 'pm2-ui.js') + '\n'
+    `\n  \x1b[31m✗ ${t('cli.nodeTooOld', { version: process.versions.node })}\x1b[0m\n` +
+    `    ${t('cli.nodeTooOldHint', { node: '/path/to/new/node', script: path.join(__dirname, 'pm2-ui.js') })}\n`
   );
   process.exit(1);
 }
 
 /* ------------------------------ 参数解析 ------------------------------ */
 
-const HELP = `
-  \x1b[1m${pkg.name}\x1b[0m v${pkg.version} —— PM2 进程与端口监控
-
-  \x1b[1m用法\x1b[0m
-    pm2-ui [选项]
-
-  \x1b[1m选项\x1b[0m
-    -p, --port <端口>     管理台监听端口        （默认 7799，可用 PM2_WEB_PORT 覆盖）
-    -H, --host <地址>     绑定地址              （默认 127.0.0.1，局域网访问用 0.0.0.0）
-        --pm2 <路径>      指定 pm2 可执行文件   （默认自动查找）
-        --open            启动后自动打开浏览器
-        --demo            启动前先拉起演示进程
-        --install         缺依赖时自动执行 npm install
-        --check-update    只检查有没有新版本，不做任何改动
-        --update          更新到最新版本并退出（面板里也能一键更新）
-    -v, --version         打印版本号
-    -h, --help            显示本帮助
-
-  \x1b[1m示例\x1b[0m
-    pm2-ui                        用默认端口启动
-    pm2-ui 8080                   直接写端口号也行
-    pm2-ui --host 0.0.0.0 --open  局域网访问并自动开浏览器
-    pm2-ui --demo                 顺便起 3 个演示进程看看效果
-    pm2-ui --check-update         看看是不是有新版本
-    pm2-ui --update               升级到最新版
-`;
+const HELP = t('cli.help', { name: pkg.name, version: pkg.version });
 
 function parseArgs(argv) {
   const opts = {
@@ -66,7 +47,7 @@ function parseArgs(argv) {
     const a = argv[i];
     const next = () => {
       const v = argv[++i];
-      if (v === undefined) fail(`选项 ${a} 缺少参数`);
+      if (v === undefined) fail(t('cli.missingArg', { option: a }));
       return v;
     };
     switch (a) {
@@ -82,12 +63,12 @@ function parseArgs(argv) {
       case '-h': case '--help': opts.help = true; break;
       default:
         if (/^\d+$/.test(a)) { opts.port = Number(a); break; }   // 允许 `pm2-ui 8080`
-        fail(`未知选项：${a}（用 --help 查看用法）`);
+        fail(t('cli.unknownOption', { option: a }));
     }
   }
 
   if (opts.port !== null && (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535)) {
-    fail(`端口不合法：${opts.port}`);
+    fail(t('cli.invalidPort', { port: opts.port }));
   }
   return opts;
 }
@@ -104,10 +85,10 @@ function hasExpress() {
 }
 
 function installDeps() {
-  console.log('  正在安装依赖（express / pm2），首次可能需要一两分钟…\n');
+  console.log(`  ${t('cli.installing')}\n`);
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const r = spawnSync(npm, ['install'], { cwd: ROOT, stdio: 'inherit' });
-  if (r.status !== 0) fail('npm install 失败，请手动在项目目录执行：npm install');
+  if (r.status !== 0) fail(t('cli.installFailed'));
 }
 
 function openBrowser(url) {
@@ -121,10 +102,12 @@ function openBrowser(url) {
 function runDemo() {
   const script = path.join(ROOT, 'scripts', 'demo.js');
   if (!fs.existsSync(script)) return;
-  console.log('  正在启动演示进程…');
-  const r = spawnSync(process.execPath, [script, 'start'], { cwd: ROOT, stdio: 'ignore' });
+  console.log(`  ${t('cli.demoStarting')}`);
+  const r = spawnSync(process.execPath, [script, 'start'], {
+    cwd: ROOT, stdio: 'ignore', env: { ...process.env, PM2_UI_LANG: LANG },
+  });
   if (r.status !== 0) {
-    console.log('  \x1b[33m! 演示进程启动失败（可能 pm2 守护进程未就绪），可稍后手动执行 npm run demo:start\x1b[0m');
+    console.log(`  \x1b[33m${t('cli.demoFailed')}\x1b[0m`);
   }
 }
 
@@ -133,46 +116,46 @@ function runDemo() {
 function showVersionInfo(info) {
   const line = (k, v) => `  \x1b[2m${k}\x1b[0m  ${v}`;
   console.log('');
-  console.log(line('当前版本', `v${info.current}`));
-  console.log(line('最新版本', info.latest ? `v${info.latest}` : '查询失败'));
-  console.log(line('安装方式', info.modeLabel));
-  if (info.canUpdate) console.log(line('更新命令', info.planText));
+  console.log(line(t('cli.currentVersion'), `v${info.current}`));
+  console.log(line(t('cli.latestVersion'), info.latest ? `v${info.latest}` : t('cli.queryFailed')));
+  console.log(line(t('cli.installMode'), info.modeLabel));
+  if (info.canUpdate) console.log(line(t('cli.updateCommand'), info.planText));
   console.log('');
 }
 
 /** pm2-ui --check-update */
 async function runCheckUpdate() {
-  const info = await updater.check({ force: true });
+  const info = await updater.check({ force: true, lang: LANG });
   showVersionInfo(info);
   if (info.error) {
-    console.log(`  \x1b[33m! 无法访问 registry：${info.error}\x1b[0m\n`);
+    console.log(`  \x1b[33m${t('cli.registryUnreachable', { error: info.error })}\x1b[0m\n`);
   } else if (info.hasUpdate) {
-    console.log(`  \x1b[33m↑ 有新版本，执行 pm2-ui --update 升级\x1b[0m\n`);
+    console.log(`  \x1b[33m${t('cli.hasUpdate')}\x1b[0m\n`);
   } else {
-    console.log('  \x1b[32m✓ 已经是最新版本\x1b[0m\n');
+    console.log(`  \x1b[32m${t('cli.upToDate')}\x1b[0m\n`);
   }
 }
 
 /** pm2-ui --update */
 async function runUpdate() {
-  const info = await updater.check({ force: true });
+  const info = await updater.check({ force: true, lang: LANG });
   showVersionInfo(info);
-  if (!info.canUpdate) return fail(info.reason || '当前安装方式不支持自动更新');
+  if (!info.canUpdate) return fail(info.reason || t('cli.updateNotSupported'));
   if (!info.hasUpdate) {
-    console.log('  \x1b[32m✓ 已经是最新版本，无需更新\x1b[0m\n');
+    console.log(`  \x1b[32m${t('cli.upToDateNoop')}\x1b[0m\n`);
     return;
   }
 
-  console.log(`  正在更新 v${info.current} → v${info.latest}…\n`);
+  console.log(`  ${t('cli.updating', { from: info.current, to: info.latest })}\n`);
   let out;
   try {
-    out = await updater.apply({ onLine: (text) => console.log('  \x1b[2m│\x1b[0m ' + text) });
+    out = await updater.apply({ lang: LANG, onLine: (text) => console.log('  \x1b[2m│\x1b[0m ' + text) });
   } catch (e) {
-    return fail('更新失败：' + e.message);
+    return fail(t('cli.updateFailed', { message: e.message }));
   }
   console.log('');
-  console.log(`  \x1b[32m✓ 更新完成\x1b[0m：v${out.from} → v${out.to}`);
-  console.log('  \x1b[2m面板正在运行时请重启它（或在面板里点「重启面板」）以加载新版本\x1b[0m\n');
+  console.log(`  \x1b[32m${t('cli.updateDone')}\x1b[0m：v${out.from} → v${out.to}`);
+  console.log(`  \x1b[2m${t('cli.updateDoneHint')}\x1b[0m\n`);
 }
 
 /* -------------------------------- 主流程 -------------------------------- */
@@ -191,12 +174,12 @@ async function main() {
   if (!hasExpress()) {
     const interactive = Boolean(process.stdin.isTTY);
     if (opts.install || interactive) {
-      console.log('\n  检测到依赖未安装，正在执行 npm install…\n');
+      console.log(`\n  ${t('cli.installingShort')}\n`);
       installDeps();
     } else {
-      fail('依赖未安装。请在项目目录执行一次 npm install（或加 --install 自动安装）');
+      fail(t('cli.depsMissing'));
     }
-    if (!hasExpress()) fail('依赖仍未就绪，请在项目目录执行：npm install');
+    if (!hasExpress()) fail(t('cli.depsStillMissing'));
   }
 
   if (opts.pm2) process.env.PM2_BIN = opts.pm2;
@@ -207,7 +190,7 @@ async function main() {
 
   let started;
   try {
-    started = await start({ port: opts.port || undefined, host: opts.host || undefined });
+    started = await start({ port: opts.port || undefined, host: opts.host || undefined, lang: LANG });
   } catch (e) {
     fail(e.message);
   }
@@ -216,20 +199,20 @@ async function main() {
 
   // 有新版本时顺手提示一句（异步，不阻塞启动，也不自动更新）
   if (updater.AUTO_CHECK) {
-    updater.check()
+    updater.check({ lang: LANG })
       .then((info) => {
         if (!info.hasUpdate) return;
         console.log(
-          `  \x1b[33m↑ 发现新版本 v${info.latest}\x1b[0m（当前 v${info.current}）\n` +
+          `  \x1b[33m${t('cli.newVersionFound', { latest: info.latest, current: info.current })}\x1b[0m\n` +
           `    ${info.planText}\n` +
-          '    也可以在面板右上角点版本号一键更新\n'
+          `    ${t('cli.newVersionPanelHint')}\n`
         );
       })
       .catch(() => { /* 检查失败就安静跳过 */ });
   }
 
   const bye = () => {
-    console.log('\n  已退出。\n');
+    console.log(`\n  ${t('cli.bye')}\n`);
     process.exit(0);
   };
   process.on('SIGINT', bye);

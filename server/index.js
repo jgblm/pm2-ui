@@ -18,6 +18,7 @@ const pm2 = require('./pm2');
 const { resolvePorts } = require('./ports');
 const store = require('./store');
 const updater = require('./update');
+const i18n = require('./i18n');
 const pkg = require('../package.json');
 
 const app = express();
@@ -35,6 +36,13 @@ function lanAddresses() {
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(ROOT, 'public'), { etag: false, maxAge: 0 }));
+
+/** 每个请求绑定一个本地化函数：req.t(key, params) */
+app.use((req, res, next) => {
+  req.lang = i18n.resolveLang(req);
+  req.t = i18n.translator(req.lang);
+  next();
+});
 
 /* --------------------------- 进程数据整理 --------------------------- */
 
@@ -94,12 +102,12 @@ function fmtProcess(proc, endpoints) {
 let cache = { ts: 0, data: null, error: null };
 const CACHE_TTL = 1200;
 
-async function buildProcessList({ force = false } = {}) {
+async function buildProcessList({ force = false, lang } = {}) {
   if (!force && cache.data && Date.now() - cache.ts < CACHE_TTL) return cache;
 
   let raws;
   try {
-    raws = await pm2.rawList();
+    raws = await pm2.rawList(lang);
     cache.error = null;
   } catch (e) {
     cache = { ts: Date.now(), data: [], error: String(e.message || e) };
@@ -140,7 +148,7 @@ function autoSave() {
 /* ------------------------------- API ------------------------------- */
 
 app.get('/api/overview', async (req, res) => {
-  const { data, error } = await buildProcessList({ force: req.query.refresh === '1' });
+  const { data, error } = await buildProcessList({ force: req.query.refresh === '1', lang: req.lang });
   const status = await pm2.isAvailable();
   res.json({
     pm2: status,
@@ -173,18 +181,19 @@ app.get('/api/overview', async (req, res) => {
 });
 
 app.get('/api/processes', async (req, res) => {
-  const { data, error } = await buildProcessList({ force: req.query.refresh === '1' });
+  const { data, error } = await buildProcessList({ force: req.query.refresh === '1', lang: req.lang });
   res.json({ processes: data, error, serverTime: Date.now() });
 });
 
 app.post('/api/processes/:name/:action', async (req, res) => {
   const { name, action } = req.params;
+  const t = req.t;
   if (!['start', 'stop', 'restart', 'reload', 'delete', 'reset'].includes(action)) {
-    return res.status(400).json({ ok: false, error: '不支持的操作：' + action });
+    return res.status(400).json({ ok: false, error: t('api.unsupportedAction', { action }) });
   }
   const def = store.get(name);
   try {
-    const list = await pm2.rawList();
+    const list = await pm2.rawList(req.lang);
     const exists = list.some((p) => (p.pm2_env?.name || p.name) === name);
     if (!exists) {
       // pm2 已经不认这个进程了：如果任务清单里有它，引导用户走"恢复启动"
@@ -192,16 +201,16 @@ app.post('/api/processes/:name/:action', async (req, res) => {
         return res.status(404).json({
           ok: false,
           recoverable: true,
-          error: `pm2 里已没有「${name}」，但任务清单里还留着参数，可用「恢复启动」按原参数拉起`,
+          error: t('api.processGoneRecoverable', { name }),
         });
       }
-      return res.status(404).json({ ok: false, error: `进程 ${name} 不存在` });
+      return res.status(404).json({ ok: false, error: t('api.processNotFound', { name }) });
     }
-    await pm2.action(name, action);
+    await pm2.action(name, action, req.lang);
     invalidate();
     autoSave();
     if (def) store.touch(name, { lastStatus: action === 'stop' ? 'stopped' : def.lastStatus });
-    res.json({ ok: true, message: `${name} ${action} 执行成功` });
+    res.json({ ok: true, message: t('api.actionOk', { name, action }) });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -231,9 +240,9 @@ app.get('/api/processes/:name/logs/stream', async (req, res) => {
   const send = (text, kind) => {
     res.write(`data: ${JSON.stringify({ text, kind })}\n\n`);
   };
-  send(`—— 开始监听 ${name} 的实时日志 ——`, 'sys');
+  send(req.t('log.streamStart', { name }), 'sys');
 
-  const child = pm2.logStream(name, send, () => send('—— 日志流已结束 ——', 'sys'));
+  const child = pm2.logStream(name, send, () => send(req.t('log.streamEnd'), 'sys'));
 
   const keepAlive = setInterval(() => res.write(': ping\n\n'), 15000);
   req.on('close', () => {
@@ -244,11 +253,12 @@ app.get('/api/processes/:name/logs/stream', async (req, res) => {
 
 app.post('/api/start', async (req, res) => {
   const { target, name, cwd, port, args } = req.body || {};
-  if (!target) return res.status(400).json({ ok: false, error: '请填写要启动的脚本或配置文件路径' });
+  const t = req.t;
+  if (!target) return res.status(400).json({ ok: false, error: t('api.needTarget') });
 
   const providedArgs = Array.isArray(args) ? args.map(String).filter((s) => s !== '') : [];
   try {
-    const out = await pm2.startTarget(target, { name, cwd, port, args: providedArgs });
+    const out = await pm2.startTarget(target, { name, cwd, port, args: providedArgs, lang: req.lang });
     invalidate();
     autoSave();
 
@@ -264,7 +274,7 @@ app.post('/api/start', async (req, res) => {
       }, 'panel');
     }
 
-    res.json({ ok: true, message: out || '启动成功' });
+    res.json({ ok: true, message: out || t('api.startOk') });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -274,7 +284,7 @@ app.post('/api/start', async (req, res) => {
 
 /** 任务清单，并与 pm2 实时状态对照（state: online / stopped / missing） */
 app.get('/api/apps', async (req, res) => {
-  const { data, error } = await buildProcessList({ force: req.query.refresh === '1' });
+  const { data, error } = await buildProcessList({ force: req.query.refresh === '1', lang: req.lang });
   const byName = new Map(data.map((p) => [p.name, p]));
 
   const apps = store.list().map((def) => {
@@ -303,13 +313,14 @@ app.get('/api/apps', async (req, res) => {
 /** 新增 / 编辑任务定义。编辑过的会被标记为 manual，pm2 自动收割不再覆盖参数 */
 app.put('/api/apps/:name', (req, res) => {
   const name = req.params.name;
-  if (!name) return res.status(400).json({ ok: false, error: '缺少任务名' });
+  const t = req.t;
+  if (!name) return res.status(400).json({ ok: false, error: t('api.needName') });
   const b = req.body || {};
 
   let target;
   if (b.target !== undefined) {
     target = String(b.target).trim();
-    if (!target) return res.status(400).json({ ok: false, error: '启动目标不能为空' });
+    if (!target) return res.status(400).json({ ok: false, error: t('api.emptyTarget') });
   }
 
   const app = store.upsert(name, {
@@ -328,14 +339,15 @@ app.put('/api/apps/:name', (req, res) => {
 
 /** 按保存的参数启动 —— pm2 已经丢掉这个任务时也能一键恢复 */
 app.post('/api/apps/:name/start', async (req, res) => {
+  const t = req.t;
   const def = store.get(req.params.name);
-  if (!def) return res.status(404).json({ ok: false, error: `任务清单里没有「${req.params.name}」` });
+  if (!def) return res.status(404).json({ ok: false, error: t('api.defNotFound', { name: req.params.name }) });
   try {
-    const out = await pm2.startDefinition(def);
+    const out = await pm2.startDefinition(def, req.lang);
     store.touch(def.name, { lastStarted: Date.now() });
     invalidate();
     autoSave();
-    res.json({ ok: true, message: out || '已按保存的参数启动', cmd: store.describeCommand(def) });
+    res.json({ ok: true, message: out || t('api.startedFromDef'), cmd: store.describeCommand(def) });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -344,15 +356,15 @@ app.post('/api/apps/:name/start', async (req, res) => {
 /** 从任务清单移除（不动 pm2 里正在跑的进程） */
 app.delete('/api/apps/:name', (req, res) => {
   const ok = store.remove(req.params.name);
-  res.json({ ok, message: ok ? '已从任务清单移除' : '任务清单里没有这条记录' });
+  res.json({ ok, message: ok ? req.t('api.removedFromList') : req.t('api.recordNotFound') });
 });
 
 /* ---------------------- pm2 列表持久化 / 恢复 ---------------------- */
 
 app.post('/api/pm2/save', async (req, res) => {
   try {
-    const out = await pm2.save();
-    res.json({ ok: true, message: out || '已保存当前 pm2 列表', dump: pm2.dumpInfo() });
+    const out = await pm2.save(req.lang);
+    res.json({ ok: true, message: out || req.t('api.savedPm2List'), dump: pm2.dumpInfo() });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -360,9 +372,9 @@ app.post('/api/pm2/save', async (req, res) => {
 
 app.post('/api/pm2/resurrect', async (req, res) => {
   try {
-    const out = await pm2.resurrect();
+    const out = await pm2.resurrect(req.lang);
     invalidate();
-    res.json({ ok: true, message: out || '已按 dump 恢复进程', dump: pm2.dumpInfo() });
+    res.json({ ok: true, message: out || req.t('api.resurrected'), dump: pm2.dumpInfo() });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
   }
@@ -373,7 +385,7 @@ app.post('/api/pm2/resurrect', async (req, res) => {
 /** 检查是否有新版本（带缓存，?force=1 强制重查） */
 app.get('/api/update/check', async (req, res) => {
   try {
-    const info = await updater.check({ force: req.query.force === '1' });
+    const info = await updater.check({ force: req.query.force === '1', lang: req.lang });
     res.json({ ok: true, ...info });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
@@ -387,7 +399,7 @@ app.get('/api/update/check', async (req, res) => {
  */
 app.get('/api/update/apply', async (req, res) => {
   if (req.query.confirm !== '1') {
-    return res.status(400).json({ ok: false, error: '缺少确认参数，请从面板点「立即更新」' });
+    return res.status(400).json({ ok: false, error: req.t('api.needConfirm') });
   }
 
   res.writeHead(200, {
@@ -407,7 +419,7 @@ app.get('/api/update/apply', async (req, res) => {
   req.on('close', () => { closed = true; clearInterval(keepAlive); });
 
   try {
-    const out = await updater.apply({ onLine: (text, kind) => send({ text, kind }) });
+    const out = await updater.apply({ lang: req.lang, onLine: (text, kind) => send({ text, kind }) });
     send({ done: true, ...out });
   } catch (e) {
     send({ done: true, ok: false, error: String(e.message || e) });
@@ -426,14 +438,14 @@ app.post('/api/update/restart', async (req, res) => {
     return res.json({
       ok: false,
       mode: 'manual',
-      message: '面板不是由 pm2 托管的：请回到终端按 Ctrl+C，再重新执行 pm2-ui 即可加载新版本',
+      message: req.t('api.notPm2Hosted'),
     });
   }
 
   // 先把响应发出去再重启：pm2 restart 会把本进程换掉，晚一步响应就丢了
-  res.json({ ok: true, mode: 'pm2', name, message: `已触发 pm2 restart ${name}，新版本正在启动` });
+  res.json({ ok: true, mode: 'pm2', name, message: req.t('api.pm2RestartTriggered', { name }) });
   setTimeout(() => {
-    updater.restartSelf().catch(() => { /* 重启失败就让旧进程继续服务 */ });
+    updater.restartSelf(req.lang).catch(() => { /* 重启失败就让旧进程继续服务 */ });
   }, 600);
 });
 
@@ -444,40 +456,43 @@ app.get(/^\/(?!api\/).*/, (req, res) => {
 
 /* ------------------------------- 启动 ------------------------------- */
 
-function banner(port, host) {
+function banner(port, host, lang) {
+  const t = i18n.translator(lang || i18n.defaultLang());
   const lines = [
     '',
-    '  \x1b[32m▍pm2-ui\x1b[0m  PM2 进程与端口监控  已启动' + ' \x1b[2mv' + pkg.version + '\x1b[0m',
+    '  \x1b[32m▍pm2-ui\x1b[0m  ' + t('server.bannerTitle') + ' \x1b[2mv' + pkg.version + '\x1b[0m',
     '',
-    `  \x1b[1m本机访问\x1b[0m   \x1b[36mhttp://localhost:${port}\x1b[0m`,
+    `  \x1b[1m${t('server.local')}\x1b[0m   \x1b[36mhttp://localhost:${port}\x1b[0m`,
   ];
   if (host === '0.0.0.0' || host === '::') {
-    for (const ip of lanAddresses()) lines.push(`  \x1b[2m局域网\x1b[0m     http://${ip}:${port}`);
+    for (const ip of lanAddresses()) lines.push(`  \x1b[2m${t('server.lan')}\x1b[0m     http://${ip}:${port}`);
   }
-  lines.push('', '  \x1b[2m按 Ctrl+C 退出\x1b[0m', '');
+  lines.push('', `  \x1b[2m${t('server.exitHint')}\x1b[0m`, '');
   console.log(lines.join('\n'));
 }
 
 /**
  * 启动 HTTP 服务
- * @param {{port?:number, host?:string, quiet?:boolean}} opts
+ * @param {{port?:number, host?:string, quiet?:boolean, lang?:string}} opts
  * @returns {Promise<{server:import('http').Server, port:number, url:string}>}
  */
 function start(opts = {}) {
   const port = Number(opts.port || process.env.PM2_WEB_PORT || 7799);
   const host = opts.host || process.env.PM2_WEB_HOST || '127.0.0.1';
+  const lang = i18n.normalize(opts.lang) || i18n.defaultLang();
+  const t = i18n.translator(lang);
   listeningPort = port;
 
   return new Promise((resolve, reject) => {
     const server = app.listen(port, host);
     server.once('error', (err) => {
       const hint = err.code === 'EADDRINUSE'
-        ? `端口 ${port} 已被占用，换一个：pm2-ui --port ${port + 1}`
-        : (err.code === 'EACCES' ? `没有权限绑定 ${host}:${port}，换一个高端口试试` : err.message);
+        ? t('server.portInUse', { port, next: port + 1 })
+        : (err.code === 'EACCES' ? t('server.permission', { host, port }) : err.message);
       reject(new Error(hint));
     });
     server.once('listening', () => {
-      if (!opts.quiet) banner(port, host);
+      if (!opts.quiet) banner(port, host, lang);
       // 预热一次更新检查：面板一打开就能看到版本 / 更新提示，不阻塞启动
       if (updater.AUTO_CHECK) updater.check().catch(() => { /* 没网也不影响使用 */ });
       resolve({ server, port, url: `http://localhost:${port}` });
@@ -490,7 +505,7 @@ module.exports = { app, start };
 // 直接 `node server/index.js` 运行时自动启动
 if (require.main === module) {
   start().catch((e) => {
-    console.error('\n  \x1b[31m启动失败：\x1b[0m' + e.message + '\n');
+    console.error('\n  \x1b[31m' + i18n.t('server.startFailed', { message: e.message }) + '\x1b[0m\n');
     process.exit(1);
   });
 }

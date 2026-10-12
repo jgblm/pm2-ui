@@ -14,6 +14,7 @@
     "scripts/demo.js",
     "ecosystem.config.js",
     "README.md",
+    "README.en.md",
     "LICENSE"
   ],
   "scripts": {
@@ -21,7 +22,7 @@
     "dev": "node --watch server/index.js",
     "demo:start": "node scripts/demo.js start",
     "demo:stop": "node scripts/demo.js stop",
-    "check": "node --check bin/pm2-ui.js && node --check server/index.js && node --check server/pm2.js && node --check server/ports.js && node --check server/store.js && node --check server/update.js && node --check public/app.js",
+    "check": "node --check bin/pm2-ui.js && node --check server/index.js && node --check server/i18n.js && node --check server/pm2.js && node --check server/ports.js && node --check server/store.js && node --check server/update.js && node --check public/i18n.js && node --check public/app.js && node --check scripts/demo.js",
     "update": "node bin/pm2-ui.js --update",
     "prepublishOnly": "npm run check",
     "link": "npm link"

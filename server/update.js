@@ -25,6 +25,8 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 
+const i18n = require('./i18n');
+
 const ROOT = path.join(__dirname, '..');
 const pkg = require(path.join(ROOT, 'package.json'));
 
@@ -33,13 +35,12 @@ const CACHE_TTL = 5 * 60 * 1000;
 const CHECK_TIMEOUT = Number(process.env.PM2_UI_UPDATE_TIMEOUT) || 8000;
 const STEP_TIMEOUT = 5 * 60 * 1000;
 
-const MODE_LABEL = {
-  global: '全局安装（npm install -g）',
-  local: '项目依赖（node_modules/pm2-ui）',
-  npx: 'npx 临时运行',
-  git: '源码检出（git 仓库）',
-  unknown: '未知方式',
-};
+/** 安装方式的可读名称（按语言）；不认识的方式原样返回 */
+function modeLabel(mode, lang) {
+  const key = 'update.mode.' + (mode || 'unknown');
+  const text = i18n.translate(lang, key);
+  return text === key ? (mode || 'unknown') : text;
+}
 
 /* ------------------------------ 小工具 ------------------------------ */
 
@@ -144,7 +145,8 @@ function detect() {
 }
 
 /** 更新步骤（数组顺序即执行顺序） */
-function planSteps(det) {
+function planSteps(det, lang) {
+  const t = i18n.translator(lang);
   const name = pkg.name;
   const npm = npmBin();
   const installArgs = ['--no-fund', '--no-audit', `${name}@latest`];
@@ -155,7 +157,7 @@ function planSteps(det) {
         canUpdate: true,
         reason: '',
         steps: [{
-          label: `npm install -g ${name}@latest`,
+          label: t('update.label.global', { name }),
           cmd: npm,
           args: ['install', '-g', ...installArgs],
           cwd: os.homedir() || det.dir,
@@ -167,7 +169,7 @@ function planSteps(det) {
         canUpdate: true,
         reason: '',
         steps: [{
-          label: `npm install ${name}@latest（在 ${det.dir}）`,
+          label: t('update.label.local', { name, dir: det.dir }),
           cmd: npm,
           args: ['install', ...installArgs],
           cwd: det.dir,
@@ -179,20 +181,20 @@ function planSteps(det) {
         canUpdate: true,
         reason: '',
         steps: [
-          { label: 'git pull --ff-only', cmd: gitBin(), args: ['pull', '--ff-only'], cwd: det.dir, timeout: 120000 },
-          { label: 'npm install', cmd: npm, args: ['install', '--no-fund', '--no-audit'], cwd: det.dir, timeout: STEP_TIMEOUT },
+          { label: t('update.label.gitPull'), cmd: gitBin(), args: ['pull', '--ff-only'], cwd: det.dir, timeout: 120000 },
+          { label: t('update.label.gitInstall'), cmd: npm, args: ['install', '--no-fund', '--no-audit'], cwd: det.dir, timeout: STEP_TIMEOUT },
         ],
       };
     case 'npx':
       return {
         canUpdate: false,
-        reason: `当前是用 npx 临时运行的，没法就地更新；下次直接跑 \`npx ${name}@latest\` 即可`,
+        reason: t('update.reason.npx', { name }),
         steps: [],
       };
     default:
       return {
         canUpdate: false,
-        reason: `没能识别安装方式，请手动更新：npm install -g ${name}@latest`,
+        reason: t('update.reason.unknown', { name }),
         steps: [],
       };
   }
@@ -208,7 +210,7 @@ function metaUrl() {
   return `${registryBase()}/${encodeURIComponent(pkg.name)}/latest`;
 }
 
-function fetchJson(url, timeout = CHECK_TIMEOUT, depth = 0) {
+function fetchJson(url, timeout = CHECK_TIMEOUT, t = i18n.translator(), depth = 0) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('http:') ? require('http') : require('https');
     const req = mod.get(url, {
@@ -220,23 +222,23 @@ function fetchJson(url, timeout = CHECK_TIMEOUT, depth = 0) {
       const code = res.statusCode || 0;
       if ([301, 302, 303, 307, 308].includes(code) && res.headers.location && depth < 3) {
         res.resume();
-        return fetchJson(new URL(res.headers.location, url).toString(), timeout, depth + 1).then(resolve, reject);
+        return fetchJson(new URL(res.headers.location, url).toString(), timeout, t, depth + 1).then(resolve, reject);
       }
       if (code !== 200) {
         res.resume();
-        return reject(new Error(`registry 返回 HTTP ${code}`));
+        return reject(new Error(t('update.registryHttp', { code })));
       }
       let buf = '';
       res.setEncoding('utf8');
       res.on('data', (c) => {
         buf += c;
-        if (buf.length > 4 * 1024 * 1024) req.destroy(new Error('registry 响应过大'));
+        if (buf.length > 4 * 1024 * 1024) req.destroy(new Error(t('update.registryTooLarge')));
       });
       res.on('end', () => {
-        try { resolve(JSON.parse(buf)); } catch (_) { reject(new Error('无法解析 registry 返回的内容')); }
+        try { resolve(JSON.parse(buf)); } catch (_) { reject(new Error(t('update.registryParse'))); }
       });
     });
-    req.setTimeout(timeout, () => req.destroy(new Error(`查询最新版本超时（${timeout}ms）`)));
+    req.setTimeout(timeout, () => req.destroy(new Error(t('update.checkTimeout', { ms: timeout }))));
     req.on('error', reject);
   });
 }
@@ -256,9 +258,10 @@ let cache = { ts: 0, data: null };
 let pending = null;
 let applying = false;   // 更新互斥：避免 EventSource 重连等情况把 npm install 跑两遍
 
-async function doCheck() {
+async function doCheck(lang) {
+  const t = i18n.translator(lang);
   const det = detect();
-  const plan = planSteps(det);
+  const plan = planSteps(det, lang);
 
   const info = {
     name: pkg.name,
@@ -266,7 +269,7 @@ async function doCheck() {
     latest: null,
     hasUpdate: false,
     mode: det.mode,
-    modeLabel: MODE_LABEL[det.mode] || det.mode,
+    modeLabel: modeLabel(det.mode, lang),
     canUpdate: plan.canUpdate,
     planText: plan.canUpdate ? plan.steps.map((s) => s.label).join('  →  ') : '',
     reason: plan.reason,
@@ -278,9 +281,9 @@ async function doCheck() {
   };
 
   try {
-    const meta = await fetchJson(metaUrl());
+    const meta = await fetchJson(metaUrl(), CHECK_TIMEOUT, t);
     const latest = String(meta.version || '').trim();
-    if (!latest) throw new Error('registry 未返回版本号');
+    if (!latest) throw new Error(t('update.noVersion'));
     info.latest = latest;
     info.hasUpdate = compareVersions(latest, info.current) > 0;
   } catch (e) {
@@ -293,13 +296,13 @@ async function doCheck() {
 
 /**
  * 检查更新（带 5 分钟缓存；force=true 强制重查）
- * @param {{force?:boolean}} [opts]
+ * @param {{force?:boolean, lang?:string}} [opts]
  */
 async function check(opts = {}) {
   const force = Boolean(opts.force);
   if (pending) return pending;
   if (!force && cache.data && Date.now() - cache.ts < CACHE_TTL) return cache.data;
-  pending = doCheck().finally(() => { pending = null; });
+  pending = doCheck(opts.lang).finally(() => { pending = null; });
   return pending;
 }
 
@@ -316,7 +319,7 @@ function quoteWinArg(a) {
 }
 
 /** 跑单个步骤，逐行回吐输出 */
-function runStep(step, onLine, sink) {
+function runStep(step, onLine, sink, t = i18n.translator()) {
   return new Promise((resolve, reject) => {
     const isWin = process.platform === 'win32';
     const env = {
@@ -338,7 +341,7 @@ function runStep(step, onLine, sink) {
       if (settled) return;
       settled = true;
       try { child.kill('SIGTERM'); } catch (_) { /* ignore */ }
-      reject(new Error(`「${step.label}」执行超时（${Math.round((step.timeout || STEP_TIMEOUT) / 1000)}s）`));
+      reject(new Error(t('update.stepTimeout', { label: step.label, seconds: Math.round((step.timeout || STEP_TIMEOUT) / 1000) })));
     }, step.timeout || STEP_TIMEOUT);
 
     const emit = (line) => {
@@ -361,7 +364,7 @@ function runStep(step, onLine, sink) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new Error(`无法执行 ${step.cmd}：${e.message}`));
+      reject(new Error(t('update.spawnFailed', { cmd: step.cmd, message: e.message })));
     });
     child.on('close', (code) => {
       if (settled) return;
@@ -375,27 +378,30 @@ function runStep(step, onLine, sink) {
 
 /**
  * 执行更新（同一时刻只允许一个）。
- * @param {{onLine?:(text:string, kind:string)=>void}} [opts] onLine 用来把输出流给面板
+ * @param {{onLine?:(text:string, kind:string)=>void, lang?:string}} [opts] onLine 用来把输出流给面板
  * @returns {Promise<{ok:boolean,from:string,to:string,changed:boolean,steps:string[],output:string,restartRequired:boolean}>}
  */
 async function apply(opts = {}) {
-  if (applying) throw new Error('已经有一次更新在执行中，请稍候');
+  const t = i18n.translator(opts.lang);
+  if (applying) throw new Error(t('update.busy'));
   const onLine = typeof opts.onLine === 'function' ? opts.onLine : () => {};
   const det = detect();
-  const plan = planSteps(det);
-  if (!plan.canUpdate || !plan.steps.length) throw new Error(plan.reason || '当前安装方式不支持自动更新');
+  const plan = planSteps(det, opts.lang);
+  if (!plan.canUpdate || !plan.steps.length) {
+    throw new Error(plan.reason || t('update.reason.notSupported'));
+  }
 
   applying = true;
   const from = versionOnDisk();
   const sink = [];
 
   try {
-    onLine(`安装方式：${MODE_LABEL[det.mode] || det.mode}`, 'sys');
+    onLine(t('update.modeLine', { mode: modeLabel(det.mode, opts.lang) }), 'sys');
     for (const step of plan.steps) {
       onLine(`$ ${step.label}`, 'sys');
-      const code = await runStep(step, onLine, sink);
+      const code = await runStep(step, onLine, sink, t);
       if (code !== 0) {
-        throw new Error(`「${step.label}」失败（退出码 ${code}），已中止更新`);
+        throw new Error(t('update.stepFailed', { label: step.label, code }));
       }
     }
 
@@ -435,24 +441,25 @@ async function pm2HostName() {
  * 重启面板以加载新版本。
  * 由 pm2 托管 → pm2 restart <自己>；否则只能提示用户手动重启（不能悄悄把进程退掉）。
  */
-async function restartSelf() {
+async function restartSelf(lang) {
+  const t = i18n.translator(lang);
   const name = await pm2HostName();
   if (!name) {
     return {
       ok: false,
       mode: 'manual',
-      message: '面板不是由 pm2 托管的：请回到终端按 Ctrl+C，再重新执行 pm2-ui 即可加载新版本',
+      message: t('api.notPm2Hosted'),
     };
   }
   const pm2 = require('./pm2');
-  await pm2.action(name, 'restart');
-  return { ok: true, mode: 'pm2', name, message: `已执行 pm2 restart ${name}，新版本正在启动` };
+  await pm2.action(name, 'restart', lang);
+  return { ok: true, mode: 'pm2', name, message: t('update.restarted', { name }) };
 }
 
 module.exports = {
   ROOT,
   AUTO_CHECK,
-  MODE_LABEL,
+  modeLabel,
   compareVersions,
   detect,
   planSteps,

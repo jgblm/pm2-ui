@@ -98,6 +98,24 @@ code { font-family: var(--mono); font-size: .92em; background: var(--bg-soft); p
 .pm2-badge.bad { background: var(--danger-soft); border-color: #f6c9ca; color: #b3252a; }
 .pm2-badge.bad .dot { background: var(--danger); }
 
+/* ------------------------------ 语言切换 ------------------------------ */
+
+.lang-switch {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 8px 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+.lang-switch:hover { border-color: var(--border-strong); color: var(--text-2); }
+.lang-switch select {
+  border: none; outline: none; background: transparent;
+  font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text-2);
+  cursor: pointer; padding: 0 2px;
+}
+
 /* --------------------------- 版本 / 更新 --------------------------- */
 
 .version-chip {

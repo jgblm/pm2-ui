@@ -22,6 +22,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const i18n = require('./i18n');
+
 const DATA_DIR = process.env.PM2_UI_DATA_DIR || path.join(os.homedir(), '.pm2-ui');
 const FILE = path.join(DATA_DIR, 'apps.json');
 const VERSION = 1;
@@ -230,9 +232,9 @@ function effectiveArgs(def) {
  * 由定义还原一条 `pm2 start` 命令的参数数组。
  * 顺序必须是：pm2 start <target> [选项] -- [脚本参数]
  */
-function toPm2Args(def) {
+function toPm2Args(def, lang) {
   const target = def.target || def.script;
-  if (!target) throw new Error('任务「' + def.name + '」缺少启动目标（脚本路径）');
+  if (!target) throw new Error(i18n.translator(lang)('store.missingTarget', { name: def.name }));
 
   const args = ['start', target];
   if (def.name) args.push('--name', def.name);

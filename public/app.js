@@ -1,8 +1,16 @@
 /* ============================================================
-   PM2 进程与端口监控 — 前端
+   PM2 进程与端口监控 — 前端 / Frontend
+   （所有面向用户的文案都经 window.i18n.t() 取用）
    ============================================================ */
 
 const $ = (id) => document.getElementById(id);
+const t = (key, params) => window.i18n.t(key, params);
+
+/** 给接口地址带上当前语言，服务端据此本地化返回文案 */
+function api(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return path + sep + 'lang=' + encodeURIComponent(window.i18n.lang);
+}
 
 const state = {
   processes: [],
@@ -37,19 +45,7 @@ function fmtBytes(n) {
   return (i === 0 ? n : n.toFixed(n < 10 ? 1 : 0)) + ' ' + u[i];
 }
 
-function fmtUptime(ms) {
-  if (!ms) return '—';
-  const sec = Math.floor((Date.now() - ms) / 1000);
-  if (sec < 0) return '—';
-  const d = Math.floor(sec / 86400);
-  const h = Math.floor((sec % 86400) / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (d) return `${d}天 ${h}时`;
-  if (h) return `${h}时 ${m}分`;
-  if (m) return `${m}分 ${s}秒`;
-  return `${s} 秒`;
-}
+const fmtUptime = (ms) => window.i18n.formatUptime(ms);
 
 function toast(msg, type = '') {
   const el = document.createElement('div');
@@ -63,11 +59,11 @@ function toast(msg, type = '') {
   }, 2600);
 }
 
-const STATUS_TEXT = {
-  online: '运行中', stopped: '已停止', errored: '错误',
-  launching: '启动中', stopping: '停止中',
+const STATUS_KEY = {
+  online: 'common.online', stopped: 'common.stopped', errored: 'common.errored',
+  launching: 'common.launching', stopping: 'common.stopping',
 };
-const statusText = (s) => STATUS_TEXT[s] || s;
+const statusText = (s) => (STATUS_KEY[s] ? t(STATUS_KEY[s]) : s);
 
 /* ------------------------------ 数据 ------------------------------ */
 
@@ -75,26 +71,28 @@ async function load({ silent = false } = {}) {
   try {
     const q = '?refresh=' + (silent ? '0' : '1');
     const [pRes, oRes, aRes] = await Promise.all([
-      fetch('/api/processes' + q).then((r) => r.json()),
-      fetch('/api/overview' + q).then((r) => r.json()),
-      fetch('/api/apps' + q).then((r) => r.json()),
+      fetch(api('/api/processes' + q)).then((r) => r.json()),
+      fetch(api('/api/overview' + q)).then((r) => r.json()),
+      fetch(api('/api/apps' + q)).then((r) => r.json()),
     ]);
 
     if (oRes.pm2 && !oRes.pm2.available) {
       $('pm2Badge').className = 'pm2-badge bad';
-      $('pm2Text').textContent = '未找到 pm2';
+      $('pm2Text').textContent = t('pm2.notFound');
     } else if (oRes.pm2) {
       $('pm2Badge').className = 'pm2-badge ok';
-      $('pm2Text').textContent = 'PM2 v' + oRes.pm2.version;
+      $('pm2Text').textContent = t('pm2.version', { version: oRes.pm2.version });
     }
 
-    $('hostLine').textContent = `${oRes.host} · ${oRes.platform} · 管理台 pid ${oRes.manager.pid}`;
+    $('hostLine').textContent = t('app.managerLine', {
+      host: oRes.host, platform: oRes.platform, pid: oRes.manager.pid,
+    });
     state.overview = oRes;
     state.processes = pRes.processes || [];
     state.apps = aRes.apps || [];
     if (oRes.update) applyUpdateInfo(oRes.update);
 
-    if (oRes.error) toast('PM2 读取失败：' + oRes.error, 'err');
+    if (oRes.error) toast(t('pm2.readFailed', { error: oRes.error }), 'err');
 
     state.processes.forEach((p) => {
       const h = state.history.get(p.name) || { cpu: [], mem: [] };
@@ -110,7 +108,7 @@ async function load({ silent = false } = {}) {
     renderApps();
     render();
   } catch (e) {
-    toast('连接后端失败：' + e.message, 'err');
+    toast(t('pm2.connectFailed', { error: e.message }), 'err');
   }
 }
 
@@ -119,13 +117,13 @@ async function load({ silent = false } = {}) {
 function renderStats() {
   const s = state.overview?.stats || {};
   $('statbar').innerHTML = `
-    <div class="stat"><div class="k">进程总数</div><div class="v">${s.total ?? 0}</div></div>
-    <div class="stat good"><div class="k">运行中</div><div class="v">${s.online ?? 0}</div></div>
-    <div class="stat"><div class="k">已停止 / 异常</div><div class="v">${s.stopped ?? 0}</div></div>
-    <div class="stat accent"><div class="k">监听端口</div><div class="v">${s.listening ?? 0}</div></div>
-    <div class="stat accent"><div class="k">其中 Web 端口</div><div class="v">${s.httpPorts ?? 0}</div></div>
-    <div class="stat"><div class="k">累计 CPU</div><div class="v">${s.cpu ?? 0}<small>%</small></div></div>
-    <div class="stat"><div class="k">累计内存</div><div class="v">${fmtBytes(s.memory || 0)}</div></div>
+    <div class="stat"><div class="k">${esc(t('stat.total'))}</div><div class="v">${s.total ?? 0}</div></div>
+    <div class="stat good"><div class="k">${esc(t('stat.online'))}</div><div class="v">${s.online ?? 0}</div></div>
+    <div class="stat"><div class="k">${esc(t('stat.stopped'))}</div><div class="v">${s.stopped ?? 0}</div></div>
+    <div class="stat accent"><div class="k">${esc(t('stat.listening'))}</div><div class="v">${s.listening ?? 0}</div></div>
+    <div class="stat accent"><div class="k">${esc(t('stat.http'))}</div><div class="v">${s.httpPorts ?? 0}</div></div>
+    <div class="stat"><div class="k">${esc(t('stat.cpu'))}</div><div class="v">${s.cpu ?? 0}<small>%</small></div></div>
+    <div class="stat"><div class="k">${esc(t('stat.memory'))}</div><div class="v">${fmtBytes(s.memory || 0)}</div></div>
   `;
 }
 
@@ -168,8 +166,8 @@ function portChip(p) {
 
   if (p.verified) {
     const url = p.url || `${p.protocol}://localhost:${p.port}`;
-    const tip = ['点击在新标签页打开', `Server: ${p.server || '未知'}`,
-      p.infra ? '中间件常用端口' : '', p.source === 'env' ? '来自环境变量声明' : '']
+    const tip = [t('ports.openTip'), t('ports.server', { server: p.server || t('common.unknown') }),
+      p.infra ? t('ports.infra') : '', p.source === 'env' ? t('ports.fromEnv') : '']
       .filter(Boolean).join(' · ');
     return `
       <a class="port web" href="${esc(url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}">
@@ -180,17 +178,10 @@ function portChip(p) {
         <span class="popen">${openIcon}</span>
       </a>`;
   }
-  const reasonMap = {
-    stopped: '进程已停止，端口未监听',
-    ECONNREFUSED: '探测时连接被拒',
-    timeout: '未在超时内响应',
-    ECONNRESET: '连接被重置',
-    EPROTO: '非 HTTP/TLS 协议',
-    'no-response': '未响应 HTTP 探测',
-  };
+  const reasonKey = 'ports.reason.' + p.reason;
   const desc = p.infra
-    ? '中间件常用端口'
-    : (reasonMap[p.reason] || p.reason || '仅 TCP，非网页服务');
+    ? t('ports.infra')
+    : (p.reason && window.i18n.messages[window.i18n.lang][reasonKey] ? t(reasonKey) : (p.reason || t('ports.tcpOnly')));
   return `
     <div class="port tcp" title="${esc(desc)}">
       <span class="pnum">:${p.port}</span>
@@ -204,9 +195,7 @@ function portBlock(p) {
   const ports = p.ports || [];
 
   if (!ports.length) {
-    const hint = p.status === 'online'
-      ? '未检测到监听端口（该进程可能不是网络服务）'
-      : '进程未运行，无法探测端口';
+    const hint = p.status === 'online' ? t('ports.noneOnline') : t('ports.noneStopped');
     return `
       <div class="port-block">
         <div class="port-none">
@@ -222,8 +211,8 @@ function portBlock(p) {
   return `
     <div class="port-block">
       <div class="port-head">
-        <span class="port-title">监听端口</span>
-        <span class="port-summary">${ports.length} 个 · Web ${webPorts.length} · 其他 ${otherPorts.length}</span>
+        <span class="port-title">${esc(t('ports.title'))}</span>
+        <span class="port-summary">${esc(t('ports.summary', { total: ports.length, web: webPorts.length, other: otherPorts.length }))}</span>
       </div>
       <div class="port-list">${ports.map(portChip).join('')}</div>
     </div>`;
@@ -236,7 +225,7 @@ function render() {
   $('emptyState').hidden = state.processes.length > 0 || (state.apps || []).length > 0;
   if (!list.length) {
     grid.innerHTML = state.processes.length
-      ? `<p class="muted" style="grid-column:1/-1;text-align:center;padding:40px">没有匹配的进程</p>`
+      ? `<p class="muted" style="grid-column:1/-1;text-align:center;padding:40px">${esc(t('grid.noMatch'))}</p>`
       : '';
     return;
   }
@@ -256,7 +245,7 @@ function render() {
         </div>
         <div class="card-head-right">
           <span class="pill ${esc(p.status)}">${esc(statusText(p.status))}</span>
-          <span class="pill pmid">${(p.ports || []).length} 端口</span>
+          <span class="pill pmid">${esc(t('grid.portCount', { n: (p.ports || []).length }))}</span>
         </div>
       </div>
 
@@ -264,28 +253,28 @@ function render() {
 
       <div class="card-body">
         <div class="metrics">
-          <div class="metric"><div class="k">CPU</div><div class="v">${(p.cpu || 0).toFixed(1)}<span>%</span></div></div>
-          <div class="metric"><div class="k">内存</div><div class="v">${fmtBytes(p.memory)}</div></div>
-          <div class="metric"><div class="k">重启次数</div><div class="v">${p.restarts}${p.unstableRestarts ? `<span> +${p.unstableRestarts}</span>` : ''}</div></div>
-          <div class="metric"><div class="k">运行时长</div><div class="v" style="font-size:13px">${running ? fmtUptime(p.uptime) : '—'}</div></div>
+          <div class="metric"><div class="k">${esc(t('metric.cpu'))}</div><div class="v">${(p.cpu || 0).toFixed(1)}<span>%</span></div></div>
+          <div class="metric"><div class="k">${esc(t('metric.memory'))}</div><div class="v">${fmtBytes(p.memory)}</div></div>
+          <div class="metric"><div class="k">${esc(t('metric.restarts'))}</div><div class="v">${p.restarts}${p.unstableRestarts ? `<span> +${p.unstableRestarts}</span>` : ''}</div></div>
+          <div class="metric"><div class="k">${esc(t('metric.uptime'))}</div><div class="v" style="font-size:13px">${running ? fmtUptime(p.uptime) : '—'}</div></div>
         </div>
         <div class="spark">
-          <div class="spark-label"><span>CPU 趋势</span><span>${h.cpu.length ? Math.max(...h.cpu).toFixed(0) + '% 峰值' : ''}</span></div>
+          <div class="spark-label"><span>${esc(t('spark.trend'))}</span><span>${h.cpu.length ? esc(t('spark.peak', { value: Math.max(...h.cpu).toFixed(0) })) : ''}</span></div>
           ${sparkline(h.cpu, '#2f6bff')}
         </div>
-        <div class="pathline" title="${esc(p.script)}"><b>入口</b> ${esc(p.script || '—')}</div>
+        <div class="pathline" title="${esc(p.script)}"><b>${esc(t('grid.entry'))}</b> ${esc(p.script || '—')}</div>
       </div>
 
       <div class="card-foot">
-        <span class="pid">pid ${p.pid || '—'} · #${p.pmId}</span>
+        <span class="pid">${esc(t('grid.pid'))} ${p.pid || '—'} · #${p.pmId}</span>
         <div class="spacer"></div>
-        <button class="btn sm" data-act="logs" data-name="${esc(p.name)}">日志</button>
+        <button class="btn sm" data-act="logs" data-name="${esc(p.name)}">${esc(t('common.logs'))}</button>
         ${running
-          ? `<button class="btn sm" data-act="restart" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>重启</button>
-             <button class="btn sm" data-act="reload" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>重载</button>
-             <button class="btn sm danger" data-act="stop" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>停止</button>`
-          : `<button class="btn sm primary" data-act="start" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>启动</button>
-             <button class="btn sm danger" data-act="delete" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>删除</button>`}
+          ? `<button class="btn sm" data-act="restart" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.restart'))}</button>
+             <button class="btn sm" data-act="reload" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.reload'))}</button>
+             <button class="btn sm danger" data-act="stop" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.stop'))}</button>`
+          : `<button class="btn sm primary" data-act="start" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.start'))}</button>
+             <button class="btn sm danger" data-act="delete" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.delete'))}</button>`}
       </div>
     </article>`;
   }).join('');
@@ -294,28 +283,28 @@ function render() {
 /* ------------------------------ 操作 ------------------------------ */
 
 async function doAction(name, act) {
-  if (act === 'delete' && !confirm(`确定要从 pm2 列表中删除「${name}」吗？\n（不会删除文件，只是移出 pm2 列表；任务参数仍保留在下面的任务清单里，可随时恢复启动）`)) return;
+  if (act === 'delete' && !confirm(t('toast.deleteConfirm', { name }))) return;
 
   state.busy.add(name);
   render();
   try {
-    const res = await fetch(`/api/processes/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
+    const res = await fetch(api(`/api/processes/${encodeURIComponent(name)}/${act}`), { method: 'POST' });
     const j = await res.json();
     if (!j.ok) {
       // pm2 已经不认这个进程，但任务清单里还有参数 —— 引导一键恢复
-      if (j.recoverable && confirm(`${j.error}\n\n现在按保存的参数把它启动回来吗？`)) {
-        const r = await post(`/api/apps/${encodeURIComponent(name)}/start`);
-        if (!r.ok) throw new Error(r.error || '恢复失败');
-        toast(`${name} 已按保存的参数启动`, 'ok');
+      if (j.recoverable && confirm(t('toast.recoverConfirm', { error: j.error }))) {
+        const r = await post(api(`/api/apps/${encodeURIComponent(name)}/start`));
+        if (!r.ok) throw new Error(r.error || t('toast.recoverFailed'));
+        toast(t('apps.savedFromDef', { name }), 'ok');
         await load();
         return;
       }
-      throw new Error(j.error || '操作失败');
+      throw new Error(j.error || t('common.fail'));
     }
-    toast(`${name} · ${act} 成功`, 'ok');
+    toast(t('toast.actionOk', { name, action: act }), 'ok');
     await load();
   } catch (e) {
-    toast(`${name} · ${act} 失败：${e.message}`, 'err');
+    toast(t('toast.actionFailed', { name, action: act, error: e.message }), 'err');
   } finally {
     state.busy.delete(name);
     render();
@@ -324,17 +313,18 @@ async function doAction(name, act) {
 
 /* ------------------------------ 任务清单 ------------------------------ */
 
-const APP_STATE_TEXT = { online: '运行中', stopped: '已停止', missing: 'pm2 已丢失' };
+const APP_STATE_KEY = { online: 'apps.stateOnline', stopped: 'apps.stateStopped', missing: 'apps.stateMissing' };
 
 function renderDumpHint(o) {
   const hint = $('dumpHint');
   const d = o && o.dump;
   if (!d) { hint.textContent = ''; return; }
   if (d.exists) {
-    const t = new Date(d.mtime).toLocaleString('zh-CN', { hour12: false });
-    hint.innerHTML = `dump.pm2 <b>${d.count}</b> 条 · ${esc(t)}${o.autosave ? ' · 自动保存已开' : ''}`;
+    const time = new Date(d.mtime).toLocaleString(window.i18n.locale, { hour12: false });
+    const suffix = o.autosave ? t('apps.dumpHintAutosave') : '';
+    hint.innerHTML = t('apps.dumpHint', { count: d.count, time: esc(time) }) + esc(suffix);
   } else {
-    hint.textContent = 'dump.pm2 尚未生成';
+    hint.textContent = t('apps.dumpNotReady');
   }
   hint.title = d.file || '';
 }
@@ -345,7 +335,7 @@ function renderApps() {
   $('appsCount').textContent = apps.length;
 
   if (!apps.length) {
-    box.innerHTML = `<p class="apps-empty muted">任务清单是空的。用「＋ 启动新进程」启动任务，或在终端 <code>pm2 start</code> 后刷新一次，面板会自动收录它的启动参数。</p>`;
+    box.innerHTML = `<p class="apps-empty muted">${t('apps.empty')}</p>`;
     return;
   }
 
@@ -356,16 +346,16 @@ function renderApps() {
     const port = a.port || ((a.live && (a.live.ports || [])[0]) ? String(a.live.ports[0].port) : '');
 
     const actions = st === 'online'
-      ? `<button class="btn sm" data-app-act="restart" data-app-name="${esc(a.name)}" ${dis}>重启</button>
-         <button class="btn sm danger" data-app-act="stop" data-app-name="${esc(a.name)}" ${dis}>停止</button>`
-      : `<button class="btn sm primary" data-app-act="recover" data-app-name="${esc(a.name)}" ${dis}>${st === 'missing' ? '恢复启动' : '启动'}</button>`;
+      ? `<button class="btn sm" data-app-act="restart" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.restart'))}</button>
+         <button class="btn sm danger" data-app-act="stop" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.stop'))}</button>`
+      : `<button class="btn sm primary" data-app-act="recover" data-app-name="${esc(a.name)}" ${dis}>${esc(st === 'missing' ? t('common.recover') : t('common.start'))}</button>`;
 
     // 「移除」只对 pm2 已经不认的任务开放：还在 pm2 里的进程会被自动收割重新收录，
     // 想彻底清掉就先在下面的进程卡片里「删除」，再从清单「移除」。
     const forget = st === 'missing'
-      ? `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" ${dis}>移除</button>`
+      ? `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.remove'))}</button>`
       : `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" disabled
-           title="进程仍在 pm2 中，移除后会被自动重新收录；想彻底清除请先在进程卡片里「删除」">移除</button>`;
+           title="${esc(t('common.removeDisabledTitle'))}">${esc(t('common.remove'))}</button>`;
 
     return `
       <div class="app-row ${st}" data-name="${esc(a.name)}">
@@ -373,16 +363,16 @@ function renderApps() {
         <div class="app-main">
           <div class="app-name">
             <b>${esc(a.name)}</b>
-            <span class="pill ${st}">${esc(APP_STATE_TEXT[st] || st)}</span>
-            ${port ? `<span class="pill port" title="声明端口">:${esc(port)}</span>` : ''}
-            ${a.source === 'manual' ? '<span class="pill manual" title="手工校对过，pm2 的自动收割不会再覆盖它">已校对</span>' : ''}
+            <span class="pill ${st}">${esc(t(APP_STATE_KEY[st]) || st)}</span>
+            ${port ? `<span class="pill port" title="${esc(t('common.declaredPort'))}">:${esc(port)}</span>` : ''}
+            ${a.source === 'manual' ? `<span class="pill manual" title="${esc(t('common.verifiedTitle'))}">${esc(t('common.verified'))}</span>` : ''}
           </div>
           <div class="app-cmd" title="${esc(a.cmd || '')}">${esc(a.cmd || '')}</div>
           ${a.note ? `<div class="app-meta">${esc(a.note)}</div>` : ''}
         </div>
         <div class="app-actions">
           ${actions}
-          <button class="btn sm ghost" data-app-act="edit" data-app-name="${esc(a.name)}" ${dis}>编辑</button>
+          <button class="btn sm ghost" data-app-act="edit" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.edit'))}</button>
           ${forget}
         </div>
       </div>`;
@@ -404,14 +394,14 @@ async function appAction(name, act) {
   if (act === 'edit') return openEdit(name);
 
   if (act === 'forget') {
-    if (!confirm(`从任务清单移除「${name}」？\n（只删掉本地记录的启动参数，不影响 pm2 里正在跑的进程）`)) return;
+    if (!confirm(t('toast.forgetConfirm', { name }))) return;
     try {
-      const j = await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' }).then((r) => r.json());
-      if (!j.ok) throw new Error(j.error || '移除失败');
-      toast(`已从任务清单移除 ${name}`, 'ok');
+      const j = await fetch(api(`/api/apps/${encodeURIComponent(name)}`), { method: 'DELETE' }).then((r) => r.json());
+      if (!j.ok) throw new Error(j.error || t('common.fail'));
+      toast(t('toast.forgotten', { name }), 'ok');
       await load();
     } catch (e) {
-      toast('移除失败：' + e.message, 'err');
+      toast(t('toast.forgetFailed', { error: e.message }), 'err');
     }
     return;
   }
@@ -420,13 +410,13 @@ async function appAction(name, act) {
   renderApps();
   try {
     const j = act === 'recover'
-      ? await post(`/api/apps/${encodeURIComponent(name)}/start`)
-      : await post(`/api/processes/${encodeURIComponent(name)}/${act}`);
-    if (!j.ok) throw new Error(j.error || '操作失败');
-    toast(act === 'recover' ? `${name} 已按保存的参数启动` : `${name} · ${act} 成功`, 'ok');
+      ? await post(api(`/api/apps/${encodeURIComponent(name)}/start`))
+      : await post(api(`/api/processes/${encodeURIComponent(name)}/${act}`));
+    if (!j.ok) throw new Error(j.error || t('common.fail'));
+    toast(act === 'recover' ? t('apps.savedFromDef', { name }) : t('toast.actionOk', { name, action: act }), 'ok');
     await load();
   } catch (e) {
-    toast(`${name} · ${act} 失败：${e.message}`, 'err');
+    toast(t('toast.actionFailed', { name, action: act, error: e.message }), 'err');
   } finally {
     state.busy.delete(name);
     renderApps();
@@ -444,28 +434,28 @@ $('saveListBtn').addEventListener('click', async () => {
   const btn = $('saveListBtn');
   btn.disabled = true;
   try {
-    const j = await post('/api/pm2/save');
+    const j = await post(api('/api/pm2/save'));
     if (!j.ok) throw new Error(j.error);
-    toast('已执行 pm2 save，列表写入 dump.pm2', 'ok');
+    toast(t('toast.savedList'), 'ok');
     await load();
   } catch (e) {
-    toast('保存失败：' + e.message, 'err');
+    toast(t('toast.saveFailed', { error: e.message }), 'err');
   } finally {
     btn.disabled = false;
   }
 });
 
 $('resurrectBtn').addEventListener('click', async () => {
-  if (!confirm('按 dump.pm2 恢复进程列表？\n（会把 dump 里登记的进程重新拉起）')) return;
+  if (!confirm(t('toast.resurrectConfirm'))) return;
   const btn = $('resurrectBtn');
   btn.disabled = true;
   try {
-    const j = await post('/api/pm2/resurrect');
+    const j = await post(api('/api/pm2/resurrect'));
     if (!j.ok) throw new Error(j.error);
-    toast('已按 dump.pm2 恢复进程', 'ok');
+    toast(t('toast.resurrected'), 'ok');
     await load();
   } catch (e) {
-    toast('恢复失败：' + e.message, 'err');
+    toast(t('toast.resurrectFailed', { error: e.message }), 'err');
   } finally {
     btn.disabled = false;
   }
@@ -518,10 +508,10 @@ $('editMask').addEventListener('click', (e) => { if (e.target.id === 'editMask')
 $('confirmEdit').addEventListener('click', async () => {
   if (!state.editing) return;
   const btn = $('confirmEdit');
-  if (!$('eTarget').value.trim()) return toast('启动目标不能为空', 'err');
+  if (!$('eTarget').value.trim()) return toast(t('toast.targetRequired'), 'err');
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/apps/${encodeURIComponent(state.editing)}`, {
+    const res = await fetch(api(`/api/apps/${encodeURIComponent(state.editing)}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -534,11 +524,11 @@ $('confirmEdit').addEventListener('click', async () => {
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
-    toast('任务参数已保存', 'ok');
+    toast(t('toast.defSaved'), 'ok');
     closeEdit();
     await load();
   } catch (e) {
-    toast('保存失败：' + e.message, 'err');
+    toast(t('toast.saveFailed', { error: e.message }), 'err');
   } finally {
     btn.disabled = false;
   }
@@ -549,7 +539,7 @@ $('confirmEdit').addEventListener('click', async () => {
 function openLogs(name) {
   state.logTarget = name;
   $('drawerTitle').textContent = name;
-  $('drawerSub').textContent = '实时日志';
+  $('drawerSub').textContent = t('common.liveLog');
   $('logView').textContent = '';
   $('drawerMask').hidden = false;
   $('drawer').hidden = false;
@@ -566,7 +556,7 @@ function closeLogs() {
 function startLogStream() {
   if (state.logStream) { state.logStream.close(); state.logStream = null; }
   if (!$('liveLog').checked) {
-    fetch(`/api/processes/${encodeURIComponent(state.logTarget)}/logs?lines=400`)
+    fetch(api(`/api/processes/${encodeURIComponent(state.logTarget)}/logs?lines=400`))
       .then((r) => r.json())
       .then((j) => {
         const view = $('logView');
@@ -577,7 +567,7 @@ function startLogStream() {
       });
     return;
   }
-  const es = new EventSource(`/api/processes/${encodeURIComponent(state.logTarget)}/logs/stream`);
+  const es = new EventSource(api(`/api/processes/${encodeURIComponent(state.logTarget)}/logs/stream`));
   es.onmessage = (ev) => {
     try {
       const { text, kind } = JSON.parse(ev.data);
@@ -622,8 +612,8 @@ function renderUpdateChip() {
   $('versionBtn').classList.toggle('has-update', has);
   $('updateDot').hidden = !has;
   $('versionBtn').title = has
-    ? `发现新版本 v${u.latest}，点击一键更新`
-    : (u && u.error ? '更新检查失败：' + u.error : '版本与更新');
+    ? t('update.chipHasUpdate', { latest: u.latest })
+    : (u && u.error ? t('update.chipError', { error: u.error }) : t('common.versionAndUpdate'));
 }
 
 function setUpdateStatus(text) {
@@ -633,10 +623,10 @@ function setUpdateStatus(text) {
 async function checkUpdate(force = false) {
   const btn = $('versionBtn');
   btn.classList.add('checking');
-  if (!$('updateMask').hidden) setUpdateStatus('正在检查最新版本…');
+  if (!$('updateMask').hidden) setUpdateStatus(t('update.checking'));
   try {
-    const j = await fetch('/api/update/check' + (force ? '?force=1' : '')).then((r) => r.json());
-    if (!j.ok) throw new Error(j.error || '检查失败');
+    const j = await fetch(api('/api/update/check' + (force ? '?force=1' : ''))).then((r) => r.json());
+    if (!j.ok) throw new Error(j.error || t('update.checkFailed'));
     state.update = j;
   } catch (e) {
     state.update = { ...(state.update || {}), error: e.message };
@@ -656,20 +646,20 @@ function renderUpdateModal() {
   $('uMode').textContent = u.modeLabel || u.mode || '—';
 
   if (!u.latest) {
-    setUpdateStatus(u.error ? '无法获取最新版本：' + u.error : '正在检查最新版本…');
+    setUpdateStatus(u.error ? t('update.cannotFetch', { error: u.error }) : t('update.checking'));
   } else if (u.hasUpdate) {
-    setUpdateStatus(`发现新版本 v${u.latest}（当前 v${u.current}），可以一键更新`);
+    setUpdateStatus(t('update.found', { latest: u.latest, current: u.current }));
   } else {
-    setUpdateStatus('已经是最新版本');
+    setUpdateStatus(t('update.upToDate'));
   }
 
   $('uPlan').textContent = u.canUpdate
     ? (u.planText || '')
-    : (u.reason || '当前安装方式不支持自动更新');
+    : (u.reason || t('update.notSupported'));
 
   const apply = $('uApply');
   apply.disabled = state.updating || !u.canUpdate || !u.hasUpdate;
-  apply.textContent = state.updating ? '更新中…' : '立即更新';
+  apply.textContent = state.updating ? t('update.applying') : t('update.apply');
   $('uCheck').disabled = state.updating;
 }
 
@@ -697,17 +687,17 @@ function appendUpdateLine(text, kind) {
 /** 执行更新：走 SSE 拿实时输出 */
 async function applyUpdate() {
   if (state.updating) return;
-  if (!confirm('确定更新到最新版本吗？\n（会执行对应更新命令，完成后需要重启面板才会生效）')) return;
+  if (!confirm(t('update.confirmApply'))) return;
 
   state.updating = true;
   $('uLog').textContent = '';
   $('uLog').hidden = false;
   $('uRestart').hidden = true;
-  setUpdateStatus('正在更新，请勿关闭页面…');
+  setUpdateStatus(t('update.running'));
   renderUpdateModal();
 
   await new Promise((resolve) => {
-    const es = new EventSource('/api/update/apply?confirm=1');
+    const es = new EventSource(api('/api/update/apply?confirm=1'));
     state.updateStream = es;
     let done = false;
     // done 兜底：流结束后浏览器可能再补一个 error 事件，避免重复收尾
@@ -725,23 +715,23 @@ async function applyUpdate() {
       if (data.done) return finish(data);
       if (data.text) appendUpdateLine(data.text, data.kind);
     };
-    es.onerror = () => finish({ ok: false, error: '更新连接中断，请查看服务端终端输出确认结果' });
+    es.onerror = () => finish({ ok: false, error: t('update.streamBroken') });
   });
 }
 
 async function finishUpdate(r) {
   state.updating = false;
   if (r.ok) {
-    appendUpdateLine(`✓ 更新完成：v${r.from} → v${r.to}`, 'sys');
-    toast(r.changed ? `已更新到 v${r.to}，重启面板后生效` : '更新命令执行完毕', 'ok');
+    appendUpdateLine(t('update.doneLine', { from: r.from, to: r.to }), 'sys');
+    toast(r.changed ? t('update.doneToast', { to: r.to }) : t('update.doneNoChange'), 'ok');
     $('uRestart').hidden = false;
     await checkUpdate(true);
     setUpdateStatus(r.changed
-      ? `v${r.to} 已就位，重启面板后生效`
-      : '已是最新版本，无需更新');
+      ? t('update.ready', { version: r.to })
+      : t('update.alreadyLatest'));
   } else {
-    appendUpdateLine('✗ ' + (r.error || '更新失败'), 'err');
-    toast('更新失败：' + (r.error || '未知错误'), 'err');
+    appendUpdateLine('✗ ' + (r.error || t('update.failedUnknown')), 'err');
+    toast(t('update.failedToast', { error: r.error || t('update.failedUnknown') }), 'err');
   }
   renderUpdateModal();
 }
@@ -751,17 +741,17 @@ async function restartPanel() {
   const btn = $('uRestart');
   btn.disabled = true;
   try {
-    const j = await post('/api/update/restart');
+    const j = await post(api('/api/update/restart'));
     if (j.ok && j.mode === 'pm2') {
-      setUpdateStatus('面板正在重启，稍后自动刷新页面…');
-      toast('已触发 pm2 重启，6 秒后自动刷新', 'ok');
+      setUpdateStatus(t('update.restarting'));
+      toast(t('update.restartTriggered'), 'ok');
       setTimeout(() => location.reload(), 6000);
       return;
     }
-    setUpdateStatus(j.message || '请手动重启面板');
-    toast(j.message || '请在终端里重启面板', '');
+    setUpdateStatus(j.message || t('update.restartManual'));
+    toast(j.message || t('update.restartInTerminal'), '');
   } catch (e) {
-    toast('重启失败：' + e.message, 'err');
+    toast(t('update.restartFailed', { error: e.message }), 'err');
   } finally {
     btn.disabled = false;
   }
@@ -784,7 +774,7 @@ document.addEventListener('click', (e) => {
   doAction(name, act);
 });
 
-$('refreshBtn').addEventListener('click', () => { load(); toast('已刷新'); });
+$('refreshBtn').addEventListener('click', () => { load(); toast(t('common.refreshed')); });
 
 $('autoRefresh').addEventListener('change', (e) => {
   state.autoRefresh = e.target.checked;
@@ -822,23 +812,23 @@ $('confirmAdd').addEventListener('click', async () => {
     port: $('fPort').value.trim() || undefined,
     args: splitLines($('fArgs').value),
   };
-  if (!body.target) return toast('请填写脚本路径', 'err');
+  if (!body.target) return toast(t('toast.scriptRequired'), 'err');
   const btn = $('confirmAdd');
   btn.disabled = true;
   try {
-    const res = await fetch('/api/start', {
+    const res = await fetch(api('/api/start'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
-    toast('启动成功，参数已记入任务清单', 'ok');
+    toast(t('toast.started'), 'ok');
     $('modalMask').hidden = true;
     ['fTarget', 'fName', 'fCwd', 'fPort', 'fArgs'].forEach((id) => { $(id).value = ''; });
     setTimeout(() => load(), 700);
   } catch (e) {
-    toast('启动失败：' + e.message, 'err');
+    toast(t('toast.startFailed', { error: e.message }), 'err');
   } finally {
     btn.disabled = false;
   }
@@ -858,7 +848,25 @@ function setupTimer() {
   if (state.autoRefresh) state.timer = setInterval(() => load({ silent: true }), 3000);
 }
 
+/* ------------------------------ 语言切换 ------------------------------ */
+
+/** 语言变化后，重画所有由 JS 生成的文案，并重新拉一次数据 */
+function rerenderForLang() {
+  if (state.logTarget) $('drawerSub').textContent = t('common.liveLog');
+  renderStats();
+  if (state.overview) renderDumpHint(state.overview);
+  renderApps();
+  render();
+  renderUpdateChip();
+  if (!$('updateMask').hidden) renderUpdateModal();
+  if (state.update) checkUpdate(true);   // modeLabel / reason 由服务端本地化，需要重查
+  load({ silent: true });                // 服务端返回的 error 文案也重新取一次
+}
+
+window.addEventListener('pm2ui:langchange', rerenderForLang);
+
 /* ------------------------------ 启动 ------------------------------ */
+
 load();
 setupTimer();
 

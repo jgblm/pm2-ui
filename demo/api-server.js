@@ -1,13 +1,49 @@
 'use strict';
-/* 演示进程 1：一个真实的 HTTP API 服务（监听 3101），用于展示"自动探测 Web 地址" */
+/* 演示进程 1：一个真实的 HTTP API 服务（监听 3101），用于展示"自动探测 Web 地址"
+   Demo process #1: a real HTTP API server (listens on 3101) that shows
+   the "auto-detected web address" feature. The page follows the browser language. */
 
 const http = require('http');
 const os = require('os');
 
 const PORT = Number(process.env.PORT || 3101);
 
-const page = () => `<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"/>
+const TEXT = {
+  'zh-CN': {
+    lang: 'zh-CN',
+    running: '● 运行中',
+    intro: (port) => `这是由 <code>pm2</code> 托管的演示服务。管理台通过 <code>lsof</code> 探测到它监听的 <code>${port}</code> 端口，
+     并验证其返回 HTTP 响应，于是生成了你刚刚点击的那个链接。`,
+    pid: '进程 PID',
+    port: '监听端口',
+    host: '主机名',
+    node: 'Node 版本',
+    uptime: '运行时长',
+    seconds: (s) => `${s} 秒`,
+    tryApi: '试试接口：',
+  },
+  'en-US': {
+    lang: 'en-US',
+    running: '● Running',
+    intro: (port) => `This is a demo service managed by <code>pm2</code>. The dashboard used <code>lsof</code> to discover
+     the port it listens on (<code>${port}</code>) and confirmed it answers HTTP — that is how the link you just clicked was created.`,
+    pid: 'Process PID',
+    port: 'Listening port',
+    host: 'Hostname',
+    node: 'Node version',
+    uptime: 'Uptime',
+    seconds: (s) => `${s}s`,
+    tryApi: 'Try the API:',
+  },
+};
+
+function langOf(req) {
+  const header = String(req.headers['accept-language'] || '').toLowerCase();
+  return header.includes('zh') ? 'zh-CN' : 'en-US';
+}
+
+const page = (T) => `<!DOCTYPE html>
+<html lang="${T.lang}"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Demo API Server</title>
 <style>
@@ -24,16 +60,15 @@ const page = () => `<!DOCTYPE html>
   a{color:#5b9dff}
 </style></head>
 <body><div class="box">
-  <div class="tag">● 运行中</div>
+  <div class="tag">${T.running}</div>
   <h1>Demo API Server</h1>
-  <p>这是由 <code>pm2</code> 托管的演示服务。管理台通过 <code>lsof</code> 探测到它监听的 <code>${PORT}</code> 端口，
-     并验证其返回 HTTP 响应，于是生成了你刚刚点击的那个链接。</p>
-  <div class="row"><span>进程 PID</span><span>${process.pid}</span></div>
-  <div class="row"><span>监听端口</span><span>${PORT}</span></div>
-  <div class="row"><span>主机名</span><span>${os.hostname()}</span></div>
-  <div class="row"><span>Node 版本</span><span>${process.version}</span></div>
-  <div class="row"><span>运行时长</span><span>${Math.floor(process.uptime())} 秒</span></div>
-  <p style="margin-top:20px">试试接口：<a href="/api/status">/api/status</a> · <a href="/api/time">/api/time</a></p>
+  <p>${T.intro(PORT)}</p>
+  <div class="row"><span>${T.pid}</span><span>${process.pid}</span></div>
+  <div class="row"><span>${T.port}</span><span>${PORT}</span></div>
+  <div class="row"><span>${T.host}</span><span>${os.hostname()}</span></div>
+  <div class="row"><span>${T.node}</span><span>${process.version}</span></div>
+  <div class="row"><span>${T.uptime}</span><span>${T.seconds(Math.floor(process.uptime()))}</span></div>
+  <p style="margin-top:20px">${T.tryApi}<a href="/api/status">/api/status</a> · <a href="/api/time">/api/time</a></p>
 </div></body></html>`;
 
 const server = http.createServer((req, res) => {
@@ -56,19 +91,20 @@ const server = http.createServer((req, res) => {
   }
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(page());
+  res.end(page(TEXT[langOf(req)]));
 });
 
 server.listen(PORT, () => {
-  console.log(`[demo-api-server] 已启动 → http://localhost:${PORT}  (pid ${process.pid})`);
+  console.log(`[demo-api-server] listening → http://localhost:${PORT}  (pid ${process.pid})`);
 });
 
 // 每隔一段时间打点日志，方便在管理台里看"实时日志"效果
+// Periodic heartbeat so the dashboard live-log drawer has something to show.
 let n = 0;
 setInterval(() => {
   n++;
-  console.log(`[demo-api-server] 心跳 #${n} rss=${(process.memoryUsage().rss / 1048576).toFixed(1)}MB`);
-  if (n % 7 === 0) console.error(`[demo-api-server] 这是一条示例错误日志 #${n}`);
+  console.log(`[demo-api-server] heartbeat #${n} rss=${(process.memoryUsage().rss / 1048576).toFixed(1)}MB`);
+  if (n % 7 === 0) console.error(`[demo-api-server] sample error log #${n}`);
 }, 8000);
 
 process.on('SIGINT', () => { server.close(() => process.exit(0)); });

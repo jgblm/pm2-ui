@@ -14,6 +14,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+const i18n = require('./i18n');
+
 const CANDIDATES = [
   process.env.PM2_BIN,
   path.join(__dirname, '..', 'node_modules', '.bin', 'pm2'),
@@ -82,21 +84,22 @@ async function isAvailable() {
 }
 
 /** 拉取进程列表（原始 pm2 结构） */
-async function rawList() {
+async function rawList(lang) {
+  const t = i18n.translator(lang);
   const r = await run(['jlist']);
   if (r.code !== 0) {
     // pm2 在"守护进程没起来"时可能返回非 0 但 stdout 是 '[]'
     if (r.stdout.trim().startsWith('[')) {
       return JSON.parse(r.stdout);
     }
-    throw new Error(r.stderr || r.error || 'pm2 jlist 执行失败');
+    throw new Error(r.stderr || r.error || t('pm2.jlistFailed'));
   }
   const text = r.stdout.trim();
   if (!text) return [];
   try {
     return JSON.parse(text);
   } catch (e) {
-    throw new Error('无法解析 pm2 输出：' + text.slice(0, 300));
+    throw new Error(t('pm2.parseFailed', { text: text.slice(0, 300) }));
   }
 }
 
@@ -111,23 +114,25 @@ const ACTIONS = {
 };
 
 /** 对指定进程执行动作；name 必须是列表中真实存在的进程名 */
-async function action(name, act) {
+async function action(name, act, lang) {
+  const t = i18n.translator(lang);
   const args = ACTIONS[act];
-  if (!args) throw new Error('不支持的操作：' + act);
+  if (!args) throw new Error(t('api.unsupportedAction', { action: act }));
   if (!name || typeof name !== 'string' || name.startsWith('-')) {
-    throw new Error('非法的进程名');
+    throw new Error(t('pm2.invalidName'));
   }
   const r = await run([...args, name, '--silent'], { timeout: 30000 });
   if (r.code !== 0) {
-    throw new Error((r.stderr || r.stdout || r.error || '').trim() || `${act} 失败`);
+    throw new Error((r.stderr || r.stdout || r.error || '').trim() || t('pm2.actionFailed', { action: act }));
   }
   return true;
 }
 
 /** 启动一个脚本 / 配置文件 */
 async function startTarget(target, opts = {}) {
+  const t = i18n.translator(opts.lang);
   if (!target || typeof target !== 'string' || target.startsWith('-')) {
-    throw new Error('非法的启动目标');
+    throw new Error(t('pm2.invalidTarget'));
   }
   const args = ['start', target];
   if (opts.name) args.push('--name', String(opts.name));
@@ -138,7 +143,7 @@ async function startTarget(target, opts = {}) {
   else if (opts.port) args.push('--', '--port', String(opts.port));
   const r = await run(args, { timeout: 40000 });
   if (r.code !== 0) {
-    throw new Error((r.stderr || r.stdout || r.error || '').trim() || '启动失败');
+    throw new Error((r.stderr || r.stdout || r.error || '').trim() || t('pm2.startFailed'));
   }
   return r.stdout.trim();
 }
@@ -163,31 +168,32 @@ async function logs(name, lines = 200, type = 'all') {
  * 执行一条写操作命令，非 0 退出即抛错。
  * 参数数组由调用方构造（如 store.toPm2Args），不拼接用户原始字符串。
  */
-async function applyArgs(args, timeout = 40000) {
-  if (!Array.isArray(args) || !args.length) throw new Error('空的 pm2 命令');
+async function applyArgs(args, timeout = 40000, lang) {
+  const t = i18n.translator(lang);
+  if (!Array.isArray(args) || !args.length) throw new Error(t('pm2.emptyCommand'));
   const r = await run(args, { timeout });
   if (r.code !== 0) {
-    throw new Error((r.stderr || r.stdout || r.error || '').trim() || `pm2 ${args.join(' ')} 执行失败`);
+    throw new Error((r.stderr || r.stdout || r.error || '').trim() || t('pm2.commandFailed', { command: args.join(' ') }));
   }
   return (r.stdout || '').trim();
 }
 
 /** 按保存的任务定义重新启动（pm2 忘掉该任务后依然可用） */
-async function startDefinition(def) {
+async function startDefinition(def, lang) {
   const { toPm2Args } = require('./store');
-  return applyArgs(toPm2Args(def), 45000);
+  return applyArgs(toPm2Args(def, lang), 45000, lang);
 }
 
 /* ------------------ 列表持久化：save / resurrect ------------------ */
 
 /** 把当前进程列表写入 dump.pm2，供守护进程重启后恢复 */
-async function save() {
-  return applyArgs(['save'], 30000);
+async function save(lang) {
+  return applyArgs(['save'], 30000, lang);
 }
 
 /** 从 dump.pm2 恢复进程列表 */
-async function resurrect() {
-  return applyArgs(['resurrect'], 45000);
+async function resurrect(lang) {
+  return applyArgs(['resurrect'], 45000, lang);
 }
 
 /** dump.pm2 的状态（存在与否 / 时间 / 条目数），用于界面提示 */
