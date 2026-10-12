@@ -21,7 +21,7 @@
     "dev": "node --watch server/index.js",
     "demo:start": "node scripts/demo.js start",
     "demo:stop": "node scripts/demo.js stop",
-    "check": "node --check bin/pm2-ui.js && node --check server/index.js && node --check server/pm2.js && node --check server/ports.js",
+    "check": "node --check bin/pm2-ui.js && node --check server/index.js && node --check server/pm2.js && node --check server/ports.js && node --check server/store.js && node --check public/app.js",
     "prepublishOnly": "npm run check",
     "link": "npm link"
   },

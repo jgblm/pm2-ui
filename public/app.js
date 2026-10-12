@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   processes: [],
+  apps: [],
   overview: null,
   filter: 'all',
   keyword: '',
@@ -15,6 +16,7 @@ const state = {
   busy: new Set(),         // 正在执行操作的进程名
   logStream: null,
   logTarget: null,
+  editing: null,           // 正在编辑的任务名
 };
 
 /* ------------------------------ 工具 ------------------------------ */
@@ -66,9 +68,11 @@ const statusText = (s) => STATUS_TEXT[s] || s;
 
 async function load({ silent = false } = {}) {
   try {
-    const [pRes, oRes] = await Promise.all([
-      fetch('/api/processes?refresh=' + (silent ? '0' : '1')).then((r) => r.json()),
-      fetch('/api/overview?refresh=' + (silent ? '0' : '1')).then((r) => r.json()),
+    const q = '?refresh=' + (silent ? '0' : '1');
+    const [pRes, oRes, aRes] = await Promise.all([
+      fetch('/api/processes' + q).then((r) => r.json()),
+      fetch('/api/overview' + q).then((r) => r.json()),
+      fetch('/api/apps' + q).then((r) => r.json()),
     ]);
 
     if (oRes.pm2 && !oRes.pm2.available) {
@@ -82,6 +86,7 @@ async function load({ silent = false } = {}) {
     $('hostLine').textContent = `${oRes.host} · ${oRes.platform} · 管理台 pid ${oRes.manager.pid}`;
     state.overview = oRes;
     state.processes = pRes.processes || [];
+    state.apps = aRes.apps || [];
 
     if (oRes.error) toast('PM2 读取失败：' + oRes.error, 'err');
 
@@ -95,6 +100,8 @@ async function load({ silent = false } = {}) {
     });
 
     renderStats();
+    renderDumpHint(oRes);
+    renderApps();
     render();
   } catch (e) {
     toast('连接后端失败：' + e.message, 'err');
@@ -220,7 +227,7 @@ function render() {
   const grid = $('grid');
   const list = state.processes.filter(matches);
 
-  $('emptyState').hidden = state.processes.length > 0;
+  $('emptyState').hidden = state.processes.length > 0 || (state.apps || []).length > 0;
   if (!list.length) {
     grid.innerHTML = state.processes.length
       ? `<p class="muted" style="grid-column:1/-1;text-align:center;padding:40px">没有匹配的进程</p>`
@@ -281,14 +288,24 @@ function render() {
 /* ------------------------------ 操作 ------------------------------ */
 
 async function doAction(name, act) {
-  if (act === 'delete' && !confirm(`确定要从 pm2 列表中删除「${name}」吗？\n（不会删除文件，只是移出 pm2 列表）`)) return;
+  if (act === 'delete' && !confirm(`确定要从 pm2 列表中删除「${name}」吗？\n（不会删除文件，只是移出 pm2 列表；任务参数仍保留在下面的任务清单里，可随时恢复启动）`)) return;
 
   state.busy.add(name);
   render();
   try {
     const res = await fetch(`/api/processes/${encodeURIComponent(name)}/${act}`, { method: 'POST' });
     const j = await res.json();
-    if (!j.ok) throw new Error(j.error || '操作失败');
+    if (!j.ok) {
+      // pm2 已经不认这个进程，但任务清单里还有参数 —— 引导一键恢复
+      if (j.recoverable && confirm(`${j.error}\n\n现在按保存的参数把它启动回来吗？`)) {
+        const r = await post(`/api/apps/${encodeURIComponent(name)}/start`);
+        if (!r.ok) throw new Error(r.error || '恢复失败');
+        toast(`${name} 已按保存的参数启动`, 'ok');
+        await load();
+        return;
+      }
+      throw new Error(j.error || '操作失败');
+    }
     toast(`${name} · ${act} 成功`, 'ok');
     await load();
   } catch (e) {
@@ -298,6 +315,228 @@ async function doAction(name, act) {
     render();
   }
 }
+
+/* ------------------------------ 任务清单 ------------------------------ */
+
+const APP_STATE_TEXT = { online: '运行中', stopped: '已停止', missing: 'pm2 已丢失' };
+
+function renderDumpHint(o) {
+  const hint = $('dumpHint');
+  const d = o && o.dump;
+  if (!d) { hint.textContent = ''; return; }
+  if (d.exists) {
+    const t = new Date(d.mtime).toLocaleString('zh-CN', { hour12: false });
+    hint.innerHTML = `dump.pm2 <b>${d.count}</b> 条 · ${esc(t)}${o.autosave ? ' · 自动保存已开' : ''}`;
+  } else {
+    hint.textContent = 'dump.pm2 尚未生成';
+  }
+  hint.title = d.file || '';
+}
+
+function renderApps() {
+  const box = $('appsList');
+  const apps = state.apps || [];
+  $('appsCount').textContent = apps.length;
+
+  if (!apps.length) {
+    box.innerHTML = `<p class="apps-empty muted">任务清单是空的。用「＋ 启动新进程」启动任务，或在终端 <code>pm2 start</code> 后刷新一次，面板会自动收录它的启动参数。</p>`;
+    return;
+  }
+
+  box.innerHTML = apps.map((a) => {
+    const st = a.state || 'missing';
+    const busy = state.busy.has(a.name);
+    const dis = busy ? 'disabled' : '';
+    const port = a.port || ((a.live && (a.live.ports || [])[0]) ? String(a.live.ports[0].port) : '');
+
+    const actions = st === 'online'
+      ? `<button class="btn sm" data-app-act="restart" data-app-name="${esc(a.name)}" ${dis}>重启</button>
+         <button class="btn sm danger" data-app-act="stop" data-app-name="${esc(a.name)}" ${dis}>停止</button>`
+      : `<button class="btn sm primary" data-app-act="recover" data-app-name="${esc(a.name)}" ${dis}>${st === 'missing' ? '恢复启动' : '启动'}</button>`;
+
+    // 「移除」只对 pm2 已经不认的任务开放：还在 pm2 里的进程会被自动收割重新收录，
+    // 想彻底清掉就先在下面的进程卡片里「删除」，再从清单「移除」。
+    const forget = st === 'missing'
+      ? `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" ${dis}>移除</button>`
+      : `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" disabled
+           title="进程仍在 pm2 中，移除后会被自动重新收录；想彻底清除请先在进程卡片里「删除」">移除</button>`;
+
+    return `
+      <div class="app-row ${st}" data-name="${esc(a.name)}">
+        <span class="app-state-dot ${st}"></span>
+        <div class="app-main">
+          <div class="app-name">
+            <b>${esc(a.name)}</b>
+            <span class="pill ${st}">${esc(APP_STATE_TEXT[st] || st)}</span>
+            ${port ? `<span class="pill port" title="声明端口">:${esc(port)}</span>` : ''}
+            ${a.source === 'manual' ? '<span class="pill manual" title="手工校对过，pm2 的自动收割不会再覆盖它">已校对</span>' : ''}
+          </div>
+          <div class="app-cmd" title="${esc(a.cmd || '')}">${esc(a.cmd || '')}</div>
+          ${a.note ? `<div class="app-meta">${esc(a.note)}</div>` : ''}
+        </div>
+        <div class="app-actions">
+          ${actions}
+          <button class="btn sm ghost" data-app-act="edit" data-app-name="${esc(a.name)}" ${dis}>编辑</button>
+          ${forget}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+/* --------------------------- 任务清单操作 --------------------------- */
+
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+async function appAction(name, act) {
+  if (act === 'edit') return openEdit(name);
+
+  if (act === 'forget') {
+    if (!confirm(`从任务清单移除「${name}」？\n（只删掉本地记录的启动参数，不影响 pm2 里正在跑的进程）`)) return;
+    try {
+      const j = await fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' }).then((r) => r.json());
+      if (!j.ok) throw new Error(j.error || '移除失败');
+      toast(`已从任务清单移除 ${name}`, 'ok');
+      await load();
+    } catch (e) {
+      toast('移除失败：' + e.message, 'err');
+    }
+    return;
+  }
+
+  state.busy.add(name);
+  renderApps();
+  try {
+    const j = act === 'recover'
+      ? await post(`/api/apps/${encodeURIComponent(name)}/start`)
+      : await post(`/api/processes/${encodeURIComponent(name)}/${act}`);
+    if (!j.ok) throw new Error(j.error || '操作失败');
+    toast(act === 'recover' ? `${name} 已按保存的参数启动` : `${name} · ${act} 成功`, 'ok');
+    await load();
+  } catch (e) {
+    toast(`${name} · ${act} 失败：${e.message}`, 'err');
+  } finally {
+    state.busy.delete(name);
+    renderApps();
+    render();
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-app-act]');
+  if (!btn) return;
+  appAction(btn.dataset.appName, btn.dataset.appAct);
+});
+
+$('saveListBtn').addEventListener('click', async () => {
+  const btn = $('saveListBtn');
+  btn.disabled = true;
+  try {
+    const j = await post('/api/pm2/save');
+    if (!j.ok) throw new Error(j.error);
+    toast('已执行 pm2 save，列表写入 dump.pm2', 'ok');
+    await load();
+  } catch (e) {
+    toast('保存失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('resurrectBtn').addEventListener('click', async () => {
+  if (!confirm('按 dump.pm2 恢复进程列表？\n（会把 dump 里登记的进程重新拉起）')) return;
+  const btn = $('resurrectBtn');
+  btn.disabled = true;
+  try {
+    const j = await post('/api/pm2/resurrect');
+    if (!j.ok) throw new Error(j.error);
+    toast('已按 dump.pm2 恢复进程', 'ok');
+    await load();
+  } catch (e) {
+    toast('恢复失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* --------------------------- 编辑任务参数 --------------------------- */
+
+const splitLines = (v) => String(v || '').split('\n').map((s) => s.trim()).filter(Boolean);
+
+function previewCmd() {
+  const target = $('eTarget').value.trim();
+  const name = $('eName').value;
+  const cwd = $('eCwd').value.trim();
+  const port = $('ePort').value.trim();
+  const args = splitLines($('eArgs').value);
+  const extra = args.length ? args : (port ? ['--port', port] : []);
+  const q = (s) => (/[\s"'$`\\|&;<>()*?[\]{}!#~]/.test(s) ? JSON.stringify(s) : s);
+
+  const parts = ['pm2', 'start', q(target || '')];
+  if (name) parts.push('--name', q(name));
+  if (cwd) parts.push('--cwd', q(cwd));
+  if (extra.length) parts.push('--', ...extra.map(q));
+  $('ePreview').textContent = parts.join(' ');
+}
+
+function openEdit(name) {
+  const a = (state.apps || []).find((x) => x.name === name);
+  if (!a) return;
+  state.editing = name;
+  $('eName').value = a.name;
+  $('eTarget').value = a.target || a.script || '';
+  $('eCwd').value = a.cwd || '';
+  $('ePort').value = a.port || '';
+  $('eArgs').value = (a.args || []).join('\n');
+  $('eNote').value = a.note || '';
+  previewCmd();
+  $('editMask').hidden = false;
+  $('eTarget').focus();
+}
+
+function closeEdit() {
+  $('editMask').hidden = true;
+  state.editing = null;
+}
+
+['eTarget', 'eCwd', 'ePort', 'eArgs'].forEach((id) => $(id).addEventListener('input', previewCmd));
+$('cancelEdit').addEventListener('click', closeEdit);
+$('editMask').addEventListener('click', (e) => { if (e.target.id === 'editMask') closeEdit(); });
+
+$('confirmEdit').addEventListener('click', async () => {
+  if (!state.editing) return;
+  const btn = $('confirmEdit');
+  if (!$('eTarget').value.trim()) return toast('启动目标不能为空', 'err');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/apps/${encodeURIComponent(state.editing)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target: $('eTarget').value.trim(),
+        cwd: $('eCwd').value.trim(),
+        port: $('ePort').value.trim(),
+        args: splitLines($('eArgs').value),
+        note: $('eNote').value.trim(),
+      }),
+    });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.error);
+    toast('任务参数已保存', 'ok');
+    closeEdit();
+    await load();
+  } catch (e) {
+    toast('保存失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 /* ------------------------------ 日志抽屉 ------------------------------ */
 
@@ -399,6 +638,7 @@ $('confirmAdd').addEventListener('click', async () => {
     name: $('fName').value.trim() || undefined,
     cwd: $('fCwd').value.trim() || undefined,
     port: $('fPort').value.trim() || undefined,
+    args: splitLines($('fArgs').value),
   };
   if (!body.target) return toast('请填写脚本路径', 'err');
   const btn = $('confirmAdd');
@@ -411,9 +651,9 @@ $('confirmAdd').addEventListener('click', async () => {
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
-    toast('启动成功', 'ok');
+    toast('启动成功，参数已记入任务清单', 'ok');
     $('modalMask').hidden = true;
-    ['fTarget', 'fName', 'fCwd', 'fPort'].forEach((id) => { $(id).value = ''; });
+    ['fTarget', 'fName', 'fCwd', 'fPort', 'fArgs'].forEach((id) => { $(id).value = ''; });
     setTimeout(() => load(), 700);
   } catch (e) {
     toast('启动失败：' + e.message, 'err');
@@ -425,6 +665,7 @@ $('confirmAdd').addEventListener('click', async () => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     $('modalMask').hidden = true;
+    closeEdit();
     closeLogs();
   }
 });

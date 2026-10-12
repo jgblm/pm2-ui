@@ -12,6 +12,7 @@
 const { execFile, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
 const CANDIDATES = [
   process.env.PM2_BIN,
@@ -131,7 +132,10 @@ async function startTarget(target, opts = {}) {
   const args = ['start', target];
   if (opts.name) args.push('--name', String(opts.name));
   if (opts.cwd) args.push('--cwd', String(opts.cwd));
-  if (opts.port) args.push('--', '--port', String(opts.port));   // 透传给脚本
+  // 显式脚本参数优先；否则用声明端口合成，规则与 store.effectiveArgs 保持一致
+  const extra = Array.isArray(opts.args) ? opts.args.map(String).filter((s) => s !== '') : [];
+  if (extra.length) args.push('--', ...extra);
+  else if (opts.port) args.push('--', '--port', String(opts.port));
   const r = await run(args, { timeout: 40000 });
   if (r.code !== 0) {
     throw new Error((r.stderr || r.stdout || r.error || '').trim() || '启动失败');
@@ -153,7 +157,55 @@ async function logs(name, lines = 200, type = 'all') {
   return { out, err };
 }
 
-module.exports = { run, isAvailable, rawList, action, startTarget, logs, logStream, getPm2Bin };
+/* ---------------- 按任务定义启动（用于「恢复启动」） ---------------- */
+
+/**
+ * 执行一条写操作命令，非 0 退出即抛错。
+ * 参数数组由调用方构造（如 store.toPm2Args），不拼接用户原始字符串。
+ */
+async function applyArgs(args, timeout = 40000) {
+  if (!Array.isArray(args) || !args.length) throw new Error('空的 pm2 命令');
+  const r = await run(args, { timeout });
+  if (r.code !== 0) {
+    throw new Error((r.stderr || r.stdout || r.error || '').trim() || `pm2 ${args.join(' ')} 执行失败`);
+  }
+  return (r.stdout || '').trim();
+}
+
+/** 按保存的任务定义重新启动（pm2 忘掉该任务后依然可用） */
+async function startDefinition(def) {
+  const { toPm2Args } = require('./store');
+  return applyArgs(toPm2Args(def), 45000);
+}
+
+/* ------------------ 列表持久化：save / resurrect ------------------ */
+
+/** 把当前进程列表写入 dump.pm2，供守护进程重启后恢复 */
+async function save() {
+  return applyArgs(['save'], 30000);
+}
+
+/** 从 dump.pm2 恢复进程列表 */
+async function resurrect() {
+  return applyArgs(['resurrect'], 45000);
+}
+
+/** dump.pm2 的状态（存在与否 / 时间 / 条目数），用于界面提示 */
+function dumpInfo() {
+  const home = process.env.PM2_HOME || path.join(os.homedir(), '.pm2');
+  const file = path.join(home, 'dump.pm2');
+  try {
+    const st = fs.statSync(file);
+    let count = 0;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      count = Array.isArray(parsed) ? parsed.length : 0;
+    } catch (_) { /* 内容损坏时只报存在 */ }
+    return { exists: true, file, mtime: st.mtimeMs, size: st.size, count };
+  } catch (_) {
+    return { exists: false, file, mtime: null, size: 0, count: 0 };
+  }
+}
 
 /** 实时日志流 */
 function logStream(name, onData, onEnd) {
@@ -174,4 +226,18 @@ function logStream(name, onData, onEnd) {
   return child;
 }
 
-module.exports = { run, isAvailable, rawList, action, startTarget, logs, logStream, getPm2Bin };
+module.exports = {
+  run,
+  isAvailable,
+  rawList,
+  action,
+  startTarget,
+  logs,
+  logStream,
+  getPm2Bin,
+  applyArgs,
+  startDefinition,
+  save,
+  resurrect,
+  dumpInfo,
+};

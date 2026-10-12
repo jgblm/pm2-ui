@@ -24,6 +24,8 @@ const { execFileSync } = require('child_process');
 const ROOT = path.join(__dirname, '..', '..');
 const STATE_FILE = process.env.MOCK_PM2_STATE || path.join(ROOT, 'data', '.mock-pm2.json');
 const LIVE_FILE = path.join(path.dirname(STATE_FILE), '.mock-pm2-live.json');
+const DUMP_FILE = process.env.MOCK_PM2_DUMP
+  || (process.env.PM2_HOME ? path.join(process.env.PM2_HOME, 'dump.pm2') : path.join(path.dirname(STATE_FILE), '.mock-pm2-dump.json'));
 
 function readLive() {
   try { return JSON.parse(fs.readFileSync(LIVE_FILE, 'utf8')); } catch (_) { return {}; }
@@ -123,7 +125,61 @@ function main() {
 
   if (cmd === 'jlist') return jlist();
 
-  if (cmd === 'save') return process.stdout.write('[PM2] Saving current process list...\n');
+  if (cmd === 'save') {
+    // 真实 pm2 的 dump.pm2 是 jlist 同构的数组，这里保持一致
+    const s = readState();
+    const arr = Object.values(s.procs).map((p, i) => ({
+      pid: 0,
+      name: p.name,
+      pm_id: p.pm_id != null ? p.pm_id : i,
+      monit: { memory: 0, cpu: 0 },
+      pm2_env: {
+        name: p.name,
+        status: p.desired || 'online',
+        namespace: 'default',
+        pm_exec_path: p.script,
+        pm_cwd: p.cwd,
+        args: p.args || [],
+        exec_mode: 'fork_mode',
+        instances: 1,
+        env: { PORT: String(p.port || '') },
+      },
+    }));
+    fs.mkdirSync(path.dirname(DUMP_FILE), { recursive: true });
+    fs.writeFileSync(DUMP_FILE, JSON.stringify(arr, null, 2));
+    return process.stdout.write('[PM2] Saving current process list...\n');
+  }
+
+  if (cmd === 'resurrect') {
+    let arr;
+    try { arr = JSON.parse(fs.readFileSync(DUMP_FILE, 'utf8')); } catch (_) { arr = []; }
+    if (!Array.isArray(arr)) arr = Object.values((arr && arr.procs) || {});
+    const cur = readState();
+    let n = 0;
+    for (const e of arr) {
+      const env = e.pm2_env || {};
+      const name = env.name || e.name;
+      if (!name) continue;
+      cur.procs[name] = {
+        name,
+        pm_id: e.pm_id != null ? e.pm_id : n,
+        script: env.pm_exec_path,
+        cwd: env.pm_cwd,
+        args: env.args || [],
+        port: env.env && env.env.PORT ? env.env.PORT : null,
+        desired: 'online',
+        pid: 0,
+        restart_time: 0,
+        created_at: Date.now(),
+        pm_uptime: Date.now(),
+        out: path.join(ROOT, 'data', 'logs', name + '-out.log'),
+        err: path.join(ROOT, 'data', 'logs', name + '-err.log'),
+      };
+      n++;
+    }
+    writeState(cur);
+    return process.stdout.write(`[PM2] Resurrecting ${n} process(es)\n`);
+  }
 
   if (cmd === 'logs') {
     const name = argv[1];
@@ -151,10 +207,13 @@ function main() {
     const ni = argv.indexOf('--name');
     const name = ni >= 0 ? argv[ni + 1] : path.basename(target, path.extname(target));
     const script = path.resolve(ROOT, target);
+    const ci = argv.indexOf('--cwd');
+    const dashDash = argv.indexOf('--');
     if (!s.procs[name]) {
       s.procs[name] = {
         name, pm_id: Object.keys(s.procs).length, script,
-        cwd: path.dirname(script), args: argv.slice(argv.indexOf('--') + 1),
+        cwd: ci >= 0 ? argv[ci + 1] : path.dirname(script),
+        args: dashDash >= 0 ? argv.slice(dashDash + 1) : [],
         port: null, desired: 'online', pid: 0, restart_time: 0,
         created_at: Date.now(), pm_uptime: Date.now(),
         out: path.join(ROOT, 'data', 'logs', name + '-out.log'),

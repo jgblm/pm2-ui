@@ -383,6 +383,80 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
 .card-foot .btn { padding: 6px 11px; }
 .card-foot .pid { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
+/* ------------------------------ 任务清单 ------------------------------ */
+
+.apps-panel {
+  margin: 12px 26px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.apps-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  flex-wrap: wrap;
+}
+.apps-title h2 {
+  margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.2px;
+  display: flex; align-items: center; gap: 8px;
+}
+.apps-title p { margin: 4px 0 0; max-width: 620px; line-height: 1.5; }
+
+.apps-count {
+  font-size: 11.5px; font-weight: 700; font-family: var(--mono);
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--primary-soft); color: #17409f;
+}
+
+.apps-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dump-hint { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.dump-hint b { color: var(--text-2); }
+
+.apps-list { display: flex; flex-direction: column; }
+
+.apps-empty {
+  margin: 0; padding: 20px 18px; font-size: 12.5px; line-height: 1.6;
+}
+
+.app-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.app-row:first-child { border-top: none; }
+.app-row:hover { background: var(--bg-soft); }
+.app-row.missing { background: linear-gradient(90deg, rgba(217,119,6,.06), transparent 45%); }
+
+.app-state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--idle); }
+.app-state-dot.online { background: var(--ok); box-shadow: 0 0 0 4px rgba(18,161,80,.13); }
+.app-state-dot.stopped { background: var(--idle); }
+.app-state-dot.missing { background: var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
+
+.app-main { min-width: 0; flex: 1; }
+.app-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.app-name b { font-size: 13.5px; font-weight: 640; letter-spacing: -.1px; }
+
+.app-cmd {
+  margin-top: 3px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.app-meta {
+  margin-top: 2px; font-size: 11.5px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.app-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+
+.pill.missing { background: var(--warn-soft); color: #a15c05; }
+.pill.manual { background: var(--primary-soft); color: #17409f; }
+.pill.port { background: var(--bg-soft); color: var(--text-2); font-family: var(--mono); }
+
 /* ------------------------------ 空状态 ------------------------------ */
 
 .empty {
@@ -452,14 +526,26 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
 @keyframes pop { from { transform: scale(.97); opacity: .6; } to { transform: none; opacity: 1; } }
 .modal h3 { margin: 0 0 4px; font-size: 16px; font-weight: 640; }
 .modal label { display: block; margin-top: 14px; font-size: 12.5px; color: var(--text-2); font-weight: 550; }
-.modal input {
+.modal input,
+.modal textarea {
   display: block; width: 100%; margin-top: 6px;
   padding: 9px 11px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: var(--panel-2);
   font: inherit; font-size: 13px; color: var(--text); outline: none;
 }
-.modal input:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(47,107,255,.12); }
+.modal textarea { font-family: var(--mono); font-size: 12px; line-height: 1.55; resize: vertical; }
+.modal input:focus,
+.modal textarea:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(47,107,255,.12); }
+.modal input[readonly] { background: var(--bg-soft); color: var(--muted); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+
+.cmd-preview {
+  margin-top: 14px; padding: 9px 11px;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
+  word-break: break-all; line-height: 1.55;
+}
 
 /* ------------------------------ Toast ------------------------------ */
 

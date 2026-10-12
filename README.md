@@ -78,7 +78,28 @@ node bin/pm2-ui.js
 
 ## 核心功能
 
-### 1. 端口监控（本项目的重点）
+### 1. 任务清单（任务丢了也能一键恢复）
+
+面板不再只是 pm2 的透传：每个任务的**启动参数（脚本、工作目录、端口、脚本参数）都会落盘保存**。
+
+| 场景 | 会发生什么 |
+| --- | --- |
+| 你在面板点了「删除」 | pm2 忘掉了这个任务，但任务清单里参数还在，点「恢复启动」即可按原样拉起 |
+| pm2 守护进程被重启（版本不符 / `pm2 kill` / 机器重启） | 内存里的进程列表被清空，任务清单里的记录依然在，逐个「恢复启动」即可 |
+| 你在终端用 `pm2 start` 起了进程 | 面板会自动从 pm2 反推参数并收录进清单，同样受保护 |
+| 进程仍在 pm2 里 | 显示「运行中 / 已停止」，可直接重启、停止 |
+
+面板顶部另有两个按钮，对应 pm2 原生的持久化机制：
+
+- **保存 pm2 列表** —— 执行 `pm2 save`，把当前列表写入 `dump.pm2`；之后每次启停操作也会自动保存（`PM2_UI_AUTOSAVE=0` 可关闭）
+- **恢复全部** —— 执行 `pm2 resurrect`，把 `dump.pm2` 里登记的进程一次性全部拉回来
+
+在面板里手工编辑过参数的任务会标记为「已校对」，pm2 的自动收割不会再覆盖它。
+任务清单存于 `~/.pm2-ui/apps.json`（用 `PM2_UI_DATA_DIR` 可改位置）。
+
+> 「移除」只对已经不在 pm2 里的任务开放。想彻底清掉一条记录：先在进程卡片里「删除」，再从清单「移除」。
+
+### 2. 端口监控（本项目的重点）
 
 对每个进程依次执行：
 
@@ -97,15 +118,15 @@ node bin/pm2-ui.js
 - 进程处于停止状态时不做探测，标注为「进程已停止，端口未监听」
 - 未检测到任何端口时，如实写明"可能不是网络服务"
 
-### 2. 进程管理
+### 3. 进程管理
 
 启动 / 停止 / 重启 / 重载（reload，零停机）/ 删除 / 重置计数，操作即页面上直接完成。
 
-### 3. 实时日志
+### 4. 实时日志
 
 点卡片上的「日志」抽屉，通过 SSE 流式推送 `pm2 logs` 输出，可切换实时 / 快照模式。
 
-### 4. 监控视图
+### 5. 监控视图
 
 CPU、内存、重启次数、运行时长，外加 CPU 趋势迷你折线图（前端保留最近 40 个采样点）。
 
@@ -118,6 +139,8 @@ CPU、内存、重启次数、运行时长，外加 CPU 趋势迷你折线图（
 | `PM2_WEB_PORT` | `7799` | 管理台监听端口 |
 | `PM2_WEB_HOST` | `127.0.0.1` | 管理台绑定地址，想局域网访问改成 `0.0.0.0` |
 | `PM2_BIN` | 自动查找 | 指定 pm2 可执行文件路径（默认优先用项目内 `node_modules/.bin/pm2`） |
+| `PM2_UI_DATA_DIR` | `~/.pm2-ui` | 任务清单 `apps.json` 的存放目录 |
+| `PM2_UI_AUTOSAVE` | 开启 | 设为 `0` 关闭「操作后自动 `pm2 save`」 |
 
 用 pm2 托管管理台自己：
 
@@ -143,7 +166,8 @@ pm2-ui --demo
 │   └── pm2-ui.js     # 命令行入口（全局命令 pm2-ui）
 ├── server/
 │   ├── index.js      # Express 服务 + REST API + SSE 日志流，导出 start()
-│   ├── pm2.js        # pm2 CLI 封装（jlist / restart / logs…）
+│   ├── pm2.js        # pm2 CLI 封装（jlist / restart / logs / save / resurrect…）
+│   ├── store.js      # ★ 任务清单持久化：收录启动参数、还原 pm2 start 命令
 │   └── ports.js      # ★ 端口探测与用途判定
 ├── public/           # 前端（原生 JS，无构建步骤）
 ├── demo/             # 演示进程：api-server / dashboard / worker
@@ -156,12 +180,18 @@ pm2-ui --demo
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/overview` | PM2 状态、系统信息、汇总统计 |
+| GET | `/api/overview` | PM2 状态、系统信息、汇总统计、dump 状态 |
 | GET | `/api/processes` | 进程列表（含探测到的 `ports`，HTTP 端口带 `url` 字段） |
 | POST | `/api/processes/:name/:action` | action ∈ start/stop/restart/reload/delete/reset |
 | GET | `/api/processes/:name/logs` | 历史日志快照（stdout / stderr 分开返回） |
 | GET | `/api/processes/:name/logs/stream` | 实时日志（SSE） |
-| POST | `/api/start` | 启动新进程 `{target, name?, cwd?, port?}` |
+| POST | `/api/start` | 启动新进程 `{target, name?, cwd?, port?, args?}`，并按 `name` 记入任务清单 |
+| GET | `/api/apps` | 任务清单，附带与 pm2 对照后的 `state`（online / stopped / missing）与可读命令 `cmd` |
+| PUT | `/api/apps/:name` | 新增 / 编辑任务定义（标记为 manual，不再被自动收割覆盖） |
+| POST | `/api/apps/:name/start` | **按保存的参数启动** —— pm2 丢掉该任务后依然可用 |
+| DELETE | `/api/apps/:name` | 从任务清单移除（不动 pm2 里正在跑的进程） |
+| POST | `/api/pm2/save` | 执行 `pm2 save`，返回 dump 状态 |
+| POST | `/api/pm2/resurrect` | 执行 `pm2 resurrect`，按 dump 恢复进程 |
 
 ---
 
@@ -170,6 +200,9 @@ pm2-ui --demo
 - 端口探测每 20 秒缓存一次，避免频繁 `lsof`；进程列表本身有 1.2 秒短缓存。
 - 默认只绑定 `127.0.0.1`，因为这个面板可以启停进程、相当于一个"远程控制台"。若要暴露到局域网，请自行加一层反向代理与鉴权。
 - `pm2 delete` 只把进程移出 pm2 列表，不会删除任何文件。
+- **两件事要分清**：关掉再打开 `pm2-ui` 面板本身，不影响 pm2 里跑着的进程；真正会让进程"消失"的是 pm2 守护进程被重启（例如换用不同版本的 pm2、`pm2 kill`、机器重启）。任务清单针对的正是后一种情况。
+- 任务清单只在参数**真的发生变化**时写盘（前端每 3 秒刷新一次，不会反复写文件）；写盘失败也不会影响面板主流程。
+- 如果 `pm2-ui` 用的是项目内自带 pm2、而你的进程是另一版本 pm2 起的，两者版本不一致会让 pm2 重启守护进程并清空列表 —— 用面板顶部的「保存 pm2 列表」先把列表落进 `dump.pm2`，即可在重启后一键「恢复全部」。
 
 ---
 

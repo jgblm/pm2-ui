@@ -50,6 +50,22 @@
   <button class="btn primary" id="addBtn">＋ 启动新进程</button>
 </section>
 
+<!-- 任务清单：面板自己记的启动参数，pm2 忘了也能一键恢复 -->
+<section class="apps-panel">
+  <div class="apps-head">
+    <div class="apps-title">
+      <h2>任务清单 <span class="apps-count" id="appsCount">0</span></h2>
+      <p class="muted small">每个任务的启动参数都会存到本地，即使被 pm2 删除、或 pm2 重启后列表丢失，也能按原参数一键恢复。想彻底清掉某条记录：先在进程卡片里「删除」，再从清单「移除」。</p>
+    </div>
+    <div class="apps-tools">
+      <span class="dump-hint" id="dumpHint"></span>
+      <button class="btn ghost sm" id="saveListBtn" title="执行 pm2 save，把当前列表写入 dump.pm2">保存 pm2 列表</button>
+      <button class="btn ghost sm" id="resurrectBtn" title="执行 pm2 resurrect，把 dump.pm2 里的进程全部拉回来">恢复全部</button>
+    </div>
+  </div>
+  <div class="apps-list" id="appsList"></div>
+</section>
+
 <main id="grid" class="grid"></main>
 
 <div class="empty" id="emptyState" hidden>
@@ -84,9 +100,33 @@
     <label>进程名称（可选）<input id="fName" placeholder="my-app" /></label>
     <label>工作目录（可选）<input id="fCwd" placeholder="/绝对路径/project" /></label>
     <label>端口（可选，会以 --port 传入）<input id="fPort" placeholder="3000" /></label>
+    <label>脚本参数（可选，每行一个；填了就以它为准）
+      <textarea id="fArgs" rows="2" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
+    </label>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelAdd">取消</button>
       <button class="btn primary" id="confirmAdd">启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑任务定义弹窗 -->
+<div class="modal-mask" id="editMask" hidden>
+  <div class="modal">
+    <h3>编辑任务参数</h3>
+    <p class="muted small">这就是「恢复启动」时会执行的 <code>pm2 start</code> 内容。改过的任务会被标记为「已校对」，pm2 的自动收割不再覆盖它。</p>
+    <label>进程名称<input id="eName" readonly /></label>
+    <label>脚本 / 配置文件路径<input id="eTarget" placeholder="/绝对路径/app.js" /></label>
+    <label>工作目录（可选）<input id="eCwd" placeholder="/绝对路径/project" /></label>
+    <label>端口（可选，会以 --port 传入）<input id="ePort" placeholder="3000" /></label>
+    <label>脚本参数（可选，每行一个，按顺序传入）
+      <textarea id="eArgs" rows="3" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
+    </label>
+    <label>备注（可选）<input id="eNote" placeholder="这个任务是干嘛的" /></label>
+    <div class="cmd-preview" id="ePreview"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="cancelEdit">取消</button>
+      <button class="btn primary" id="confirmEdit">保存</button>
     </div>
   </div>
 </div>
