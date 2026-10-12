@@ -1,6 +1,6 @@
 {
   "name": "pm2-ui",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "PM2 进程与端口监控面板：一条命令启动，自动探测每个进程监听的 TCP 端口",
   "main": "server/index.js",
   "bin": {
