@@ -265,7 +265,37 @@ code { font-family: var(--mono); font-size: .92em; background: var(--bg-soft); p
 .chip:hover { border-color: var(--border-strong); }
 .chip.active { background: var(--text); border-color: var(--text); color: #fff; }
 
-.toolbar > .btn.primary { margin-left: auto; }
+.toolbar-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.task-count {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 700;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--primary-soft); color: #17409f;
+}
+
+.dump-hint { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
+.dump-hint b { color: var(--text-2); }
+
+/* --------------------------- 列表 / 卡片切换 --------------------------- */
+
+.view-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.view-btn {
+  width: 30px; height: 24px;
+  display: grid; place-items: center;
+  border: none; background: transparent; color: var(--muted);
+  border-radius: 7px; cursor: pointer; transition: .15s;
+}
+.view-btn:hover { background: var(--bg-soft); color: var(--text); }
+.view-btn.active { background: var(--text); color: #fff; }
 
 /* ------------------------------ 卡片网格 ------------------------------ */
 
@@ -454,65 +484,32 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
 .card-foot .btn { padding: 6px 11px; }
 .card-foot .pid { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
-/* ------------------------------ 任务清单 ------------------------------ */
+/* ------------------------------ 任务列表视图 ------------------------------ */
 
-.apps-panel {
-  margin: 12px 26px 0;
+.task-list {
+  display: flex; flex-direction: column;
+  gap: 8px;
+  padding: 14px 26px 60px;
+}
+
+.task-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  overflow: hidden;
+  transition: border-color .18s, box-shadow .18s;
 }
+.task-row:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lg); }
+.task-row.is-stopped { background: var(--panel-2); }
+.task-row.is-stopped .task-main { opacity: .85; }
 
-.apps-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel-2);
-  flex-wrap: wrap;
-}
-.apps-title h2 {
-  margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.2px;
-  display: flex; align-items: center; gap: 8px;
-}
-.apps-title p { margin: 4px 0 0; max-width: 620px; line-height: 1.5; }
+.task-main { min-width: 0; flex: 1; }
+.task-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.task-name b { font-size: 13.5px; font-weight: 640; letter-spacing: -.1px; }
 
-.apps-count {
-  font-size: 11.5px; font-weight: 700; font-family: var(--mono);
-  padding: 2px 8px; border-radius: 999px;
-  background: var(--primary-soft); color: #17409f;
-}
-
-.apps-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dump-hint { font-size: 11.5px; color: var(--muted); font-family: var(--mono); }
-.dump-hint b { color: var(--text-2); }
-
-.apps-list { display: flex; flex-direction: column; }
-
-.apps-empty {
-  margin: 0; padding: 20px 18px; font-size: 12.5px; line-height: 1.6;
-}
-
-.app-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-}
-.app-row:first-child { border-top: none; }
-.app-row:hover { background: var(--bg-soft); }
-.app-row.missing { background: linear-gradient(90deg, rgba(217,119,6,.06), transparent 45%); }
-
-.app-state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--idle); }
-.app-state-dot.online { background: var(--ok); box-shadow: 0 0 0 4px rgba(18,161,80,.13); }
-.app-state-dot.stopped { background: var(--idle); }
-.app-state-dot.missing { background: var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
-
-.app-main { min-width: 0; flex: 1; }
-.app-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.app-name b { font-size: 13.5px; font-weight: 640; letter-spacing: -.1px; }
-
-.app-cmd {
+.task-sub {
   margin-top: 3px;
   font-family: var(--mono); font-size: 11.5px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -522,11 +519,33 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.app-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.task-metrics {
+  display: flex; align-items: center; gap: 14px; flex: none;
+  font-family: var(--mono); font-size: 12px; color: var(--text-2);
+}
+.task-metrics b { font-weight: 650; color: var(--text); }
+.task-metrics i { font-style: normal; color: var(--muted); font-size: 10.5px; margin-left: 1px; }
+
+.task-actions,
+.card-actions {
+  display: flex; align-items: center; gap: 6px; flex: none;
+  flex-wrap: wrap; justify-content: flex-end;
+}
+
+.no-match { text-align: center; padding: 40px; }
+.grid > .no-match { grid-column: 1 / -1; }
+
+.card.is-missing {
+  background: linear-gradient(180deg, #fffaf2, var(--panel-2) 42%);
+  border-color: #f0d6ab;
+}
+.status-dot.missing { background: var(--warn); box-shadow: 0 0 0 4px rgba(217,119,6,.14); }
 
 .pill.missing { background: var(--warn-soft); color: #a15c05; }
 .pill.manual { background: var(--primary-soft); color: #17409f; }
 .pill.port { background: var(--bg-soft); color: var(--text-2); font-family: var(--mono); }
+a.pill.port.link { text-decoration: none; }
+a.pill.port.link:hover { background: var(--primary-soft); color: #17409f; }
 
 /* ------------------------------ 空状态 ------------------------------ */
 
@@ -638,7 +657,11 @@ a.port:hover .popen { opacity: 1; transform: translate(1px, -1px); }
 @media (max-width: 720px) {
   .topbar { flex-wrap: wrap; gap: 12px; }
   .grid { grid-template-columns: 1fr; padding: 14px 14px 60px; }
+  .task-list { padding: 14px 14px 60px; }
   .statbar, .toolbar { padding-left: 14px; padding-right: 14px; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .search { min-width: 100%; }
+  .toolbar-tools { margin-left: 0; width: 100%; }
+  .task-row { flex-wrap: wrap; }
+  .task-actions { width: 100%; justify-content: flex-start; }
 }

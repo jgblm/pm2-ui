@@ -61,10 +61,14 @@
       'common.newVersion': '有新版本',
       'common.declaredPort': '声明端口',
       'common.verifiedTitle': '手工校对过，pm2 的自动收割不会再覆盖它',
-      'common.removeDisabledTitle': '进程仍在 pm2 中，移除后会被自动重新收录；想彻底清除请先在进程卡片里「删除」',
+      'common.removeDisabledTitle': '进程仍在 pm2 中，移除后会被自动重新收录；想彻底清除请先「删除」它',
       'common.language': '语言 / Language',
       'common.unknown': '未知',
       'common.fail': '操作失败',
+      'common.viewMode': '显示方式',
+      'common.viewList': '列表视图',
+      'common.viewCard': '卡片视图',
+      'common.logsUnavailable': '该任务当前不在 pm2 中，没有日志可读',
 
       'search.placeholder': '搜索进程名、脚本路径、端口…',
 
@@ -95,6 +99,7 @@
       'empty.desc': '点击右上角「启动新进程」，或运行 <code>npm run demo:start</code> 启动几个演示应用看看效果。',
 
       'grid.noMatch': '没有匹配的进程',
+      'grid.savedOnly': '仅本地任务记录',
       'grid.entry': '入口',
       'grid.portCount': '{n} 端口',
       'grid.pid': 'pid',
@@ -122,7 +127,7 @@
       'ports.reason.EPROTO': '非 HTTP/TLS 协议',
       'ports.reason.no-response': '未响应 HTTP 探测',
 
-      'toast.deleteConfirm': '确定要从 pm2 列表中删除「{name}」吗？\n（不会删除文件，只是移出 pm2 列表；任务参数仍保留在下面的任务清单里，可随时恢复启动）',
+      'toast.deleteConfirm': '确定要从 pm2 列表中删除「{name}」吗？\n（不会删除文件，只是移出 pm2 列表；任务参数仍会保留，可随时恢复启动）',
       'toast.recoverConfirm': '{error}\n\n现在按保存的参数把它启动回来吗？',
       'toast.recoverFailed': '恢复失败',
       'toast.actionOk': '{name} · {action} 成功',
@@ -242,10 +247,14 @@
       'common.newVersion': 'New version',
       'common.declaredPort': 'Declared port',
       'common.verifiedTitle': 'Manually curated — pm2 harvesting will no longer overwrite it',
-      'common.removeDisabledTitle': 'Still managed by pm2, so it would be re-harvested right away; delete it from the process card first',
+      'common.removeDisabledTitle': 'Still managed by pm2, so it would be re-harvested right away; delete it first to purge it for good',
       'common.language': 'Language / 语言',
       'common.unknown': 'unknown',
       'common.fail': 'Action failed',
+      'common.viewMode': 'Display mode',
+      'common.viewList': 'List view',
+      'common.viewCard': 'Card view',
+      'common.logsUnavailable': 'This app is not in pm2 right now, so there are no logs to read',
 
       'search.placeholder': 'Search name, script path, port…',
 
@@ -276,6 +285,7 @@
       'empty.desc': 'Click “Start process” in the top-right corner, or run <code>npm run demo:start</code> to launch a few demo apps.',
 
       'grid.noMatch': 'No matching process',
+      'grid.savedOnly': 'Local record only',
       'grid.entry': 'entry',
       'grid.portCount': '{n} port(s)',
       'grid.pid': 'pid',
@@ -303,7 +313,7 @@
       'ports.reason.EPROTO': 'Not an HTTP/TLS protocol',
       'ports.reason.no-response': 'No HTTP response',
 
-      'toast.deleteConfirm': 'Remove “{name}” from the pm2 list?\n(No file is deleted — it is only taken out of pm2; the launch parameters stay in the saved-apps list below and can be recovered anytime)',
+      'toast.deleteConfirm': 'Remove “{name}” from the pm2 list?\n(No file is deleted — it is only taken out of pm2; the launch parameters are kept and can be recovered anytime)',
       'toast.recoverConfirm': '{error}\n\nStart it again with the saved parameters now?',
       'toast.recoverFailed': 'Recovery failed',
       'toast.actionOk': '{name} · {action} succeeded',

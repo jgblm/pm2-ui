@@ -30,6 +30,9 @@ const state = {
   updateChecked: false,
   updateStream: null,      // 更新日志的 SSE
   updating: false,
+  view: (() => {           // 任务显示方式：list / card
+    try { return localStorage.getItem('pm2-ui-view') === 'list' ? 'list' : 'card'; } catch (_) { return 'card'; }
+  })(),
 };
 
 /* ------------------------------ 工具 ------------------------------ */
@@ -105,7 +108,6 @@ async function load({ silent = false } = {}) {
 
     renderStats();
     renderDumpHint(oRes);
-    renderApps();
     render();
   } catch (e) {
     toast(t('pm2.connectFailed', { error: e.message }), 'err');
@@ -127,14 +129,34 @@ function renderStats() {
   `;
 }
 
-function matches(p) {
-  if (state.filter === 'online' && p.status !== 'online') return false;
-  if (state.filter === 'stopped' && p.status === 'online') return false;
-  if (state.filter === 'ports' && !(p.ports || []).length) return false;
+/** 把 pm2 的实时进程与本地保存的任务定义合并成统一的任务列表 */
+function buildTasks() {
+  const map = new Map();
+  for (const p of state.processes) map.set(p.name, { name: p.name, proc: p, app: null });
+  for (const a of state.apps || []) {
+    const cur = map.get(a.name) || { name: a.name, proc: null, app: null };
+    cur.app = a;
+    map.set(a.name, cur);
+  }
+  return [...map.values()];
+}
+
+/** 任务状态：以 pm2 实时状态为准；pm2 已经不认的任务记为 missing */
+const taskStatus = (task) => (task.proc ? task.proc.status : 'missing');
+
+function taskMatches(task) {
+  const p = task.proc;
+  const a = task.app || {};
+  const running = taskStatus(task) === 'online';
+
+  if (state.filter === 'online' && !running) return false;
+  if (state.filter === 'stopped' && running) return false;
+  if (state.filter === 'ports' && !((p && p.ports) || []).length) return false;
   if (state.keyword) {
     const k = state.keyword.toLowerCase();
-    const hay = [p.name, p.script, p.cwd, p.namespace,
-      ...(p.ports || []).map((e) => e.port)].join(' ').toLowerCase();
+    const hay = [task.name, p && p.script, p && p.cwd, a.target, a.cwd, a.note,
+      ...(((p && p.ports) || []).map((e) => e.port))]
+      .filter(Boolean).join(' ').toLowerCase();
     if (!hay.includes(k)) return false;
   }
   return true;
@@ -220,78 +242,191 @@ function portBlock(p) {
 
 function render() {
   const grid = $('grid');
-  const list = state.processes.filter(matches);
+  const tasks = buildTasks();
+  const list = tasks.filter(taskMatches);
 
-  $('emptyState').hidden = state.processes.length > 0 || (state.apps || []).length > 0;
+  $('taskCount').textContent = tasks.length;
+  $('emptyState').hidden = tasks.length > 0;
+  grid.className = state.view === 'list' ? 'task-list' : 'grid';
+
   if (!list.length) {
-    grid.innerHTML = state.processes.length
-      ? `<p class="muted" style="grid-column:1/-1;text-align:center;padding:40px">${esc(t('grid.noMatch'))}</p>`
-      : '';
+    grid.innerHTML = tasks.length ? `<p class="no-match muted">${esc(t('grid.noMatch'))}</p>` : '';
     return;
   }
 
-  grid.innerHTML = list.map((p) => {
-    const h = state.history.get(p.name) || { cpu: [], mem: [] };
-    const running = p.status === 'online';
-    const busy = state.busy.has(p.name);
+  grid.innerHTML = list.map(state.view === 'list' ? renderTaskRow : renderTaskCard).join('');
+}
 
+/** 任务可执行的操作：列表视图与卡片视图共用同一套按钮 */
+function taskActions(task) {
+  const { name, proc: p, app: a } = task;
+  const dis = state.busy.has(name) ? 'disabled' : '';
+  const btn = (act, label, cls = '') =>
+    `<button class="btn sm ${cls}" data-act="${act}" data-name="${esc(name)}" ${dis}>${esc(label)}</button>`;
+  const parts = [];
+
+  // 日志：pm2 里还有这个进程才能读到
+  parts.push(p
+    ? btn('logs', t('common.logs'))
+    : `<button class="btn sm" disabled title="${esc(t('common.logsUnavailable'))}">${esc(t('common.logs'))}</button>`);
+
+  if (p && p.status === 'online') {
+    parts.push(btn('restart', t('common.restart')), btn('reload', t('common.reload')), btn('stop', t('common.stop'), 'danger'));
+  } else if (p) {
+    parts.push(btn('start', t('common.start'), 'primary'), btn('delete', t('common.delete'), 'danger'));
+  } else if (a) {
+    parts.push(btn('recover', t('common.recover'), 'primary'));
+  }
+
+  if (a) {
+    parts.push(btn('edit', t('common.edit')));
+    // 「移除」只对 pm2 已经不认的任务开放，否则会被自动收割重新收录
+    parts.push(p
+      ? `<button class="btn sm ghost" disabled title="${esc(t('common.removeDisabledTitle'))}">${esc(t('common.remove'))}</button>`
+      : btn('forget', t('common.remove'), 'ghost'));
+  }
+
+  return parts.join('');
+}
+
+/** 状态 / 端口 / 已校对 等标签 */
+function taskPills(task) {
+  const { proc: p, app: a } = task;
+  const st = taskStatus(task);
+  const out = [`<span class="pill ${esc(st)}">${esc(st === 'missing' ? t('apps.stateMissing') : statusText(st))}</span>`];
+
+  const ports = (p && p.ports) || [];
+  ports.slice(0, 3).forEach((po) => {
+    if (po.verified && po.url) {
+      out.push(`<a class="pill port link" href="${esc(po.url)}" target="_blank" rel="noopener noreferrer" title="${esc(t('ports.openTip'))}">:${po.port}</a>`);
+    } else {
+      out.push(`<span class="pill port">:${po.port}</span>`);
+    }
+  });
+  if (ports.length > 3) out.push(`<span class="pill port">+${ports.length - 3}</span>`);
+  if (!p && a && a.port) out.push(`<span class="pill port" title="${esc(t('common.declaredPort'))}">:${esc(a.port)}</span>`);
+  if (a && a.source === 'manual') out.push(`<span class="pill manual" title="${esc(t('common.verifiedTitle'))}">${esc(t('common.verified'))}</span>`);
+
+  return out.join('');
+}
+
+/** 列表视图：一行一个任务 */
+function renderTaskRow(task) {
+  const { name, proc: p, app: a } = task;
+  const running = taskStatus(task) === 'online';
+  const sub = (p && p.script) || (a && (a.target || a.cmd)) || '';
+
+  const metrics = running
+    ? `<div class="task-metrics">
+        <span><b>${(p.cpu || 0).toFixed(1)}</b><i>%</i></span>
+        <span><b>${fmtBytes(p.memory)}</b></span>
+        <span><b>${fmtUptime(p.uptime)}</b></span>
+      </div>`
+    : '';
+
+  return `
+  <div class="task-row ${running ? '' : 'is-stopped'}" data-name="${esc(name)}">
+    <span class="status-dot ${esc(taskStatus(task))}"></span>
+    <div class="task-main">
+      <div class="task-name"><b>${esc(name)}</b>${taskPills(task)}</div>
+      <div class="task-sub" title="${esc(sub)}">${esc(sub || '—')}</div>
+      ${a && a.note ? `<div class="app-meta" title="${esc(a.note)}">${esc(a.note)}</div>` : ''}
+    </div>
+    ${metrics}
+    <div class="task-actions">${taskActions(task)}</div>
+  </div>`;
+}
+
+/** 卡片视图：一个任务一张卡 */
+function renderTaskCard(task) {
+  const { name, proc: p, app: a } = task;
+  const running = taskStatus(task) === 'online';
+
+  // pm2 已经不认这个任务了，只剩本地保存的启动参数
+  if (!p) {
     return `
-    <article class="card ${running ? '' : 'is-stopped'}" data-name="${esc(p.name)}">
+    <article class="card is-missing" data-name="${esc(name)}">
       <div class="card-head">
-        <span class="status-dot ${esc(p.status)}"></span>
+        <span class="status-dot missing"></span>
         <div style="min-width:0">
-          <div class="card-title">${esc(p.name)}</div>
-          <div class="card-meta">${esc(p.execMode || 'fork')}${p.instances > 1 ? ' ×' + p.instances : ''} · ${esc(p.namespace)}</div>
+          <div class="card-title">${esc(name)}</div>
+          <div class="card-meta">${esc(t('grid.savedOnly'))}</div>
         </div>
         <div class="card-head-right">
-          <span class="pill ${esc(p.status)}">${esc(statusText(p.status))}</span>
-          <span class="pill pmid">${esc(t('grid.portCount', { n: (p.ports || []).length }))}</span>
+          <span class="pill missing">${esc(t('apps.stateMissing'))}</span>
+          ${a.port ? `<span class="pill port" title="${esc(t('common.declaredPort'))}">:${esc(a.port)}</span>` : ''}
         </div>
       </div>
-
-      ${portBlock(p)}
-
       <div class="card-body">
-        <div class="metrics">
-          <div class="metric"><div class="k">${esc(t('metric.cpu'))}</div><div class="v">${(p.cpu || 0).toFixed(1)}<span>%</span></div></div>
-          <div class="metric"><div class="k">${esc(t('metric.memory'))}</div><div class="v">${fmtBytes(p.memory)}</div></div>
-          <div class="metric"><div class="k">${esc(t('metric.restarts'))}</div><div class="v">${p.restarts}${p.unstableRestarts ? `<span> +${p.unstableRestarts}</span>` : ''}</div></div>
-          <div class="metric"><div class="k">${esc(t('metric.uptime'))}</div><div class="v" style="font-size:13px">${running ? fmtUptime(p.uptime) : '—'}</div></div>
-        </div>
-        <div class="spark">
-          <div class="spark-label"><span>${esc(t('spark.trend'))}</span><span>${h.cpu.length ? esc(t('spark.peak', { value: Math.max(...h.cpu).toFixed(0) })) : ''}</span></div>
-          ${sparkline(h.cpu, '#2f6bff')}
-        </div>
-        <div class="pathline" title="${esc(p.script)}"><b>${esc(t('grid.entry'))}</b> ${esc(p.script || '—')}</div>
+        <div class="pathline" title="${esc(a.target || '')}"><b>${esc(t('grid.entry'))}</b> ${esc(a.target || '—')}</div>
+        ${a.note ? `<div class="app-meta" style="margin-top:8px">${esc(a.note)}</div>` : ''}
       </div>
-
       <div class="card-foot">
-        <span class="pid">${esc(t('grid.pid'))} ${p.pid || '—'} · #${p.pmId}</span>
+        <span class="pid">${esc(t('apps.stateMissing'))}</span>
         <div class="spacer"></div>
-        <button class="btn sm" data-act="logs" data-name="${esc(p.name)}">${esc(t('common.logs'))}</button>
-        ${running
-          ? `<button class="btn sm" data-act="restart" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.restart'))}</button>
-             <button class="btn sm" data-act="reload" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.reload'))}</button>
-             <button class="btn sm danger" data-act="stop" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.stop'))}</button>`
-          : `<button class="btn sm primary" data-act="start" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.start'))}</button>
-             <button class="btn sm danger" data-act="delete" data-name="${esc(p.name)}" ${busy ? 'disabled' : ''}>${esc(t('common.delete'))}</button>`}
+        <div class="card-actions">${taskActions(task)}</div>
       </div>
     </article>`;
-  }).join('');
+  }
+
+  const h = state.history.get(name) || { cpu: [], mem: [] };
+
+  return `
+  <article class="card ${running ? '' : 'is-stopped'}" data-name="${esc(p.name)}">
+    <div class="card-head">
+      <span class="status-dot ${esc(p.status)}"></span>
+      <div style="min-width:0">
+        <div class="card-title">${esc(p.name)}</div>
+        <div class="card-meta">${esc(p.execMode || 'fork')}${p.instances > 1 ? ' ×' + p.instances : ''} · ${esc(p.namespace)}</div>
+      </div>
+      <div class="card-head-right">
+        <span class="pill ${esc(p.status)}">${esc(statusText(p.status))}</span>
+        <span class="pill pmid">${esc(t('grid.portCount', { n: (p.ports || []).length }))}</span>
+      </div>
+    </div>
+
+    ${portBlock(p)}
+
+    <div class="card-body">
+      <div class="metrics">
+        <div class="metric"><div class="k">${esc(t('metric.cpu'))}</div><div class="v">${(p.cpu || 0).toFixed(1)}<span>%</span></div></div>
+        <div class="metric"><div class="k">${esc(t('metric.memory'))}</div><div class="v">${fmtBytes(p.memory)}</div></div>
+        <div class="metric"><div class="k">${esc(t('metric.restarts'))}</div><div class="v">${p.restarts}${p.unstableRestarts ? `<span> +${p.unstableRestarts}</span>` : ''}</div></div>
+        <div class="metric"><div class="k">${esc(t('metric.uptime'))}</div><div class="v" style="font-size:13px">${running ? fmtUptime(p.uptime) : '—'}</div></div>
+      </div>
+      <div class="spark">
+        <div class="spark-label"><span>${esc(t('spark.trend'))}</span><span>${h.cpu.length ? esc(t('spark.peak', { value: Math.max(...h.cpu).toFixed(0) })) : ''}</span></div>
+        ${sparkline(h.cpu, '#2f6bff')}
+      </div>
+      <div class="pathline" title="${esc(p.script)}"><b>${esc(t('grid.entry'))}</b> ${esc(p.script || '—')}</div>
+    </div>
+
+    <div class="card-foot">
+      <span class="pid">${esc(t('grid.pid'))} ${p.pid || '—'} · #${p.pmId}</span>
+      <div class="spacer"></div>
+      <div class="card-actions">${taskActions(task)}</div>
+    </div>
+  </article>`;
 }
 
 /* ------------------------------ 操作 ------------------------------ */
 
 async function doAction(name, act) {
+  if (act === 'logs') return openLogs(name);
+  if (act === 'edit') return openEdit(name);
+  if (act === 'forget') return forgetTask(name);
   if (act === 'delete' && !confirm(t('toast.deleteConfirm', { name }))) return;
 
   state.busy.add(name);
   render();
   try {
-    const res = await fetch(api(`/api/processes/${encodeURIComponent(name)}/${act}`), { method: 'POST' });
+    const url = act === 'recover'
+      ? `/api/apps/${encodeURIComponent(name)}/start`
+      : `/api/processes/${encodeURIComponent(name)}/${act}`;
+    const res = await fetch(api(url), { method: 'POST' });
     const j = await res.json();
     if (!j.ok) {
-      // pm2 已经不认这个进程，但任务清单里还有参数 —— 引导一键恢复
+      // pm2 已经不认这个进程，但本地还存着启动参数 —— 引导一键恢复
       if (j.recoverable && confirm(t('toast.recoverConfirm', { error: j.error }))) {
         const r = await post(api(`/api/apps/${encodeURIComponent(name)}/start`));
         if (!r.ok) throw new Error(r.error || t('toast.recoverFailed'));
@@ -301,7 +436,9 @@ async function doAction(name, act) {
       }
       throw new Error(j.error || t('common.fail'));
     }
-    toast(t('toast.actionOk', { name, action: act }), 'ok');
+    toast(act === 'recover'
+      ? t('apps.savedFromDef', { name })
+      : t('toast.actionOk', { name, action: act }), 'ok');
     await load();
   } catch (e) {
     toast(t('toast.actionFailed', { name, action: act, error: e.message }), 'err');
@@ -311,9 +448,20 @@ async function doAction(name, act) {
   }
 }
 
-/* ------------------------------ 任务清单 ------------------------------ */
+/** 从任务里移除本地保存的启动参数（不动 pm2 里正在跑的进程） */
+async function forgetTask(name) {
+  if (!confirm(t('toast.forgetConfirm', { name }))) return;
+  try {
+    const j = await fetch(api(`/api/apps/${encodeURIComponent(name)}`), { method: 'DELETE' }).then((r) => r.json());
+    if (!j.ok) throw new Error(j.error || t('common.fail'));
+    toast(t('toast.forgotten', { name }), 'ok');
+    await load();
+  } catch (e) {
+    toast(t('toast.forgetFailed', { error: e.message }), 'err');
+  }
+}
 
-const APP_STATE_KEY = { online: 'apps.stateOnline', stopped: 'apps.stateStopped', missing: 'apps.stateMissing' };
+/* --------------------------- dump.pm2 状态提示 --------------------------- */
 
 function renderDumpHint(o) {
   const hint = $('dumpHint');
@@ -329,57 +477,7 @@ function renderDumpHint(o) {
   hint.title = d.file || '';
 }
 
-function renderApps() {
-  const box = $('appsList');
-  const apps = state.apps || [];
-  $('appsCount').textContent = apps.length;
-
-  if (!apps.length) {
-    box.innerHTML = `<p class="apps-empty muted">${t('apps.empty')}</p>`;
-    return;
-  }
-
-  box.innerHTML = apps.map((a) => {
-    const st = a.state || 'missing';
-    const busy = state.busy.has(a.name);
-    const dis = busy ? 'disabled' : '';
-    const port = a.port || ((a.live && (a.live.ports || [])[0]) ? String(a.live.ports[0].port) : '');
-
-    const actions = st === 'online'
-      ? `<button class="btn sm" data-app-act="restart" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.restart'))}</button>
-         <button class="btn sm danger" data-app-act="stop" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.stop'))}</button>`
-      : `<button class="btn sm primary" data-app-act="recover" data-app-name="${esc(a.name)}" ${dis}>${esc(st === 'missing' ? t('common.recover') : t('common.start'))}</button>`;
-
-    // 「移除」只对 pm2 已经不认的任务开放：还在 pm2 里的进程会被自动收割重新收录，
-    // 想彻底清掉就先在下面的进程卡片里「删除」，再从清单「移除」。
-    const forget = st === 'missing'
-      ? `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.remove'))}</button>`
-      : `<button class="btn sm ghost" data-app-act="forget" data-app-name="${esc(a.name)}" disabled
-           title="${esc(t('common.removeDisabledTitle'))}">${esc(t('common.remove'))}</button>`;
-
-    return `
-      <div class="app-row ${st}" data-name="${esc(a.name)}">
-        <span class="app-state-dot ${st}"></span>
-        <div class="app-main">
-          <div class="app-name">
-            <b>${esc(a.name)}</b>
-            <span class="pill ${st}">${esc(t(APP_STATE_KEY[st]) || st)}</span>
-            ${port ? `<span class="pill port" title="${esc(t('common.declaredPort'))}">:${esc(port)}</span>` : ''}
-            ${a.source === 'manual' ? `<span class="pill manual" title="${esc(t('common.verifiedTitle'))}">${esc(t('common.verified'))}</span>` : ''}
-          </div>
-          <div class="app-cmd" title="${esc(a.cmd || '')}">${esc(a.cmd || '')}</div>
-          ${a.note ? `<div class="app-meta">${esc(a.note)}</div>` : ''}
-        </div>
-        <div class="app-actions">
-          ${actions}
-          <button class="btn sm ghost" data-app-act="edit" data-app-name="${esc(a.name)}" ${dis}>${esc(t('common.edit'))}</button>
-          ${forget}
-        </div>
-      </div>`;
-  }).join('');
-}
-
-/* --------------------------- 任务清单操作 --------------------------- */
+/* ------------------------------ 请求工具 ------------------------------ */
 
 async function post(url, body) {
   const res = await fetch(url, {
@@ -389,46 +487,6 @@ async function post(url, body) {
   });
   return res.json();
 }
-
-async function appAction(name, act) {
-  if (act === 'edit') return openEdit(name);
-
-  if (act === 'forget') {
-    if (!confirm(t('toast.forgetConfirm', { name }))) return;
-    try {
-      const j = await fetch(api(`/api/apps/${encodeURIComponent(name)}`), { method: 'DELETE' }).then((r) => r.json());
-      if (!j.ok) throw new Error(j.error || t('common.fail'));
-      toast(t('toast.forgotten', { name }), 'ok');
-      await load();
-    } catch (e) {
-      toast(t('toast.forgetFailed', { error: e.message }), 'err');
-    }
-    return;
-  }
-
-  state.busy.add(name);
-  renderApps();
-  try {
-    const j = act === 'recover'
-      ? await post(api(`/api/apps/${encodeURIComponent(name)}/start`))
-      : await post(api(`/api/processes/${encodeURIComponent(name)}/${act}`));
-    if (!j.ok) throw new Error(j.error || t('common.fail'));
-    toast(act === 'recover' ? t('apps.savedFromDef', { name }) : t('toast.actionOk', { name, action: act }), 'ok');
-    await load();
-  } catch (e) {
-    toast(t('toast.actionFailed', { name, action: act, error: e.message }), 'err');
-  } finally {
-    state.busy.delete(name);
-    renderApps();
-    render();
-  }
-}
-
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-app-act]');
-  if (!btn) return;
-  appAction(btn.dataset.appName, btn.dataset.appAct);
-});
 
 $('saveListBtn').addEventListener('click', async () => {
   const btn = $('saveListBtn');
@@ -769,9 +827,7 @@ $('updateMask').addEventListener('click', (e) => { if (e.target.id === 'updateMa
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-act]');
   if (!btn) return;
-  const { act, name } = btn.dataset;
-  if (act === 'logs') return openLogs(name);
-  doAction(name, act);
+  doAction(btn.dataset.name, btn.dataset.act);
 });
 
 $('refreshBtn').addEventListener('click', () => { load(); toast(t('common.refreshed')); });
@@ -793,6 +849,21 @@ $('filterChips').addEventListener('click', (e) => {
   chip.classList.add('active');
   state.filter = chip.dataset.filter;
   render();
+});
+
+/* --------------------------- 列表 / 卡片切换 --------------------------- */
+
+function setView(view) {
+  state.view = view === 'list' ? 'list' : 'card';
+  try { localStorage.setItem('pm2-ui-view', state.view); } catch (_) { /* ignore */ }
+  [...$('viewSwitch').querySelectorAll('.view-btn')]
+    .forEach((b) => b.classList.toggle('active', b.dataset.view === state.view));
+  render();
+}
+
+$('viewSwitch').addEventListener('click', (e) => {
+  const btn = e.target.closest('.view-btn');
+  if (btn) setView(btn.dataset.view);
 });
 
 $('closeDrawer').addEventListener('click', closeLogs);
@@ -855,7 +926,6 @@ function rerenderForLang() {
   if (state.logTarget) $('drawerSub').textContent = t('common.liveLog');
   renderStats();
   if (state.overview) renderDumpHint(state.overview);
-  renderApps();
   render();
   renderUpdateChip();
   if (!$('updateMask').hidden) renderUpdateModal();
@@ -867,6 +937,7 @@ window.addEventListener('pm2ui:langchange', rerenderForLang);
 
 /* ------------------------------ 启动 ------------------------------ */
 
+setView(state.view);
 load();
 setupTimer();
 

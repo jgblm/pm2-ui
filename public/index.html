@@ -58,23 +58,21 @@
     <button class="chip" data-filter="stopped" data-i18n="common.stopped">已停止</button>
     <button class="chip" data-filter="ports" data-i18n="common.hasPorts">有监听端口</button>
   </div>
-  <button class="btn primary" id="addBtn" data-i18n="common.addProcess">＋ 启动新进程</button>
-</section>
-
-<!-- 任务清单：面板自己记的启动参数，pm2 忘了也能一键恢复 -->
-<section class="apps-panel">
-  <div class="apps-head">
-    <div class="apps-title">
-      <h2><span data-i18n="apps.title">任务清单</span> <span class="apps-count" id="appsCount">0</span></h2>
-      <p class="muted small" data-i18n="apps.desc">每个任务的启动参数都会存到本地，即使被 pm2 删除、或 pm2 重启后列表丢失，也能按原参数一键恢复。想彻底清掉某条记录：先在进程卡片里「删除」，再从清单「移除」。</p>
+  <div class="toolbar-tools">
+    <span class="task-count" id="taskCount">0</span>
+    <span class="dump-hint" id="dumpHint"></span>
+    <button class="btn ghost sm" id="saveListBtn" data-i18n-title="apps.saveListTitle" title="执行 pm2 save，把当前列表写入 dump.pm2"><span data-i18n="apps.saveList">保存 pm2 列表</span></button>
+    <button class="btn ghost sm" id="resurrectBtn" data-i18n-title="apps.resurrectTitle" title="执行 pm2 resurrect，把 dump.pm2 里的进程全部拉回来"><span data-i18n="apps.resurrect">恢复全部</span></button>
+    <div class="view-switch" id="viewSwitch" role="group" data-i18n-title="common.viewMode" title="显示方式">
+      <button class="view-btn" data-view="list" data-i18n-title="common.viewList" title="列表视图">
+        <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 5h18v2.4H3zM3 10.8h18v2.4H3zM3 16.6h18V19H3z" fill="currentColor"/></svg>
+      </button>
+      <button class="view-btn" data-view="card" data-i18n-title="common.viewCard" title="卡片视图">
+        <svg viewBox="0 0 24 24" width="15" height="15"><path d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z" fill="currentColor"/></svg>
+      </button>
     </div>
-    <div class="apps-tools">
-      <span class="dump-hint" id="dumpHint"></span>
-      <button class="btn ghost sm" id="saveListBtn" data-i18n-title="apps.saveListTitle" title="执行 pm2 save，把当前列表写入 dump.pm2"><span data-i18n="apps.saveList">保存 pm2 列表</span></button>
-      <button class="btn ghost sm" id="resurrectBtn" data-i18n-title="apps.resurrectTitle" title="执行 pm2 resurrect，把 dump.pm2 里的进程全部拉回来"><span data-i18n="apps.resurrect">恢复全部</span></button>
-    </div>
+    <button class="btn primary" id="addBtn" data-i18n="common.addProcess">＋ 启动新进程</button>
   </div>
-  <div class="apps-list" id="appsList"></div>
 </section>
 
 <main id="grid" class="grid"></main>
