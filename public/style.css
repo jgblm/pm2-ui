@@ -628,6 +628,7 @@ a.pill.port.link:hover { background: var(--primary-soft); color: #17409f; }
 .modal input:focus,
 .modal textarea:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 3px rgba(47,107,255,.12); }
 .modal input[readonly] { background: var(--bg-soft); color: var(--muted); }
+.modal input.invalid { border-color: var(--danger); background: #fff; box-shadow: 0 0 0 3px rgba(229,72,77,.12); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
 .cmd-preview {

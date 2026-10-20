@@ -319,7 +319,7 @@ app.get('/api/apps', async (req, res) => {
 });
 
 /** 新增 / 编辑任务定义。编辑过的会被标记为 manual，pm2 自动收割不再覆盖参数 */
-app.put('/api/apps/:name', (req, res) => {
+app.put('/api/apps/:name', async (req, res) => {
   const name = req.params.name;
   const t = req.t;
   if (!name) return res.status(400).json({ ok: false, error: t('api.needName') });
@@ -331,7 +331,28 @@ app.put('/api/apps/:name', (req, res) => {
     if (!target) return res.status(400).json({ ok: false, error: t('api.emptyTarget') });
   }
 
-  const app = store.upsert(name, {
+  // 名称也可以改：先做格式与查重校验（沿用旧名时不校验格式，避免老进程改不动）
+  const nextName = b.name === undefined ? name : String(b.name).trim();
+  if (!nextName) return res.status(400).json({ ok: false, error: t('api.needName') });
+  const renamed = nextName !== name;
+  if (renamed && (nextName.startsWith('-') || /[\s/]/.test(nextName))) {
+    return res.status(400).json({ ok: false, error: t('api.invalidName', { name: nextName }) });
+  }
+  if (renamed && store.get(nextName)) {
+    return res.status(409).json({ ok: false, error: t('api.nameExists', { name: nextName }) });
+  }
+
+  // pm2 没有"改名"能力，只能先删旧条目再按新名字建；先看看旧名字有没有在跑
+  let live = null;
+  if (renamed) {
+    try {
+      const list = await pm2.rawList(req.lang);
+      live = list.find((p) => (p.pm2_env?.name || p.name) === name) || null;
+    } catch (_) { /* pm2 不可用：只改清单，不动进程 */ }
+    store.rename(name, nextName);
+  }
+
+  const app = store.upsert(nextName, {
     ...(target !== undefined ? { target, script: target } : {}),
     ...(b.args !== undefined
       ? { args: Array.isArray(b.args) ? b.args.map(String) : String(b.args).split(/\s+/).filter(Boolean) }
@@ -342,7 +363,33 @@ app.put('/api/apps/:name', (req, res) => {
     source: 'manual',
   }, 'manual');
 
-  res.json({ ok: true, app: { ...app, cmd: store.describeCommand(app) } });
+  let warning = null;
+  let restarted = false;
+  if (renamed && live) {
+    const wasOnline = ['online', 'launching'].includes(live.pm2_env?.status);
+    try {
+      await pm2.action(name, 'delete', req.lang);
+      // 原来在跑的才重新拉起；本来是停止态的，留着定义等用户「恢复启动」即可
+      if (wasOnline) {
+        await pm2.startDefinition(app, req.lang);
+        restarted = true;
+      }
+    } catch (e) {
+      warning = t('api.renameRebuildFailed', { name: nextName, error: String(e.message || e) });
+    }
+  }
+
+  if (renamed) {
+    invalidate();
+    autoSave();
+  }
+
+  res.json({
+    ok: true,
+    app: { ...app, cmd: store.describeCommand(app) },
+    renamed: renamed ? { from: name, to: nextName, restarted } : null,
+    warning,
+  });
 });
 
 /** 按保存的参数启动 —— pm2 已经丢掉这个任务时也能一键恢复 */

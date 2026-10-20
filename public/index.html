@@ -124,7 +124,7 @@
   <div class="modal">
     <h3 data-i18n="edit.title">编辑任务参数</h3>
     <p class="muted small" data-i18n-html="edit.desc">这就是「恢复启动」时会执行的 <code>pm2 start</code> 内容。改过的任务会被标记为「已校对」，pm2 的自动收割不再覆盖它。</p>
-    <label><span data-i18n="edit.name">进程名称</span><input id="eName" readonly /></label>
+    <label><span data-i18n="edit.name">进程名称</span><input id="eName" placeholder="my-app" /></label>
     <label><span data-i18n="edit.target">脚本 / 配置文件路径</span><input id="eTarget" data-i18n-placeholder="edit.targetPh" placeholder="/绝对路径/app.js" /></label>
     <label><span data-i18n="edit.cwd">工作目录（可选）</span><input id="eCwd" data-i18n-placeholder="add.cwdPh" placeholder="/绝对路径/project" /></label>
     <label><span data-i18n="edit.port">端口（可选，会以 --port 传入）</span><input id="ePort" placeholder="3000" /></label>

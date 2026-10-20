@@ -525,7 +525,7 @@ const splitLines = (v) => String(v || '').split('\n').map((s) => s.trim()).filte
 
 function previewCmd() {
   const target = $('eTarget').value.trim();
-  const name = $('eName').value;
+  const name = $('eName').value.trim();
   const cwd = $('eCwd').value.trim();
   const port = $('ePort').value.trim();
   const args = splitLines($('eArgs').value);
@@ -544,6 +544,7 @@ function openEdit(name) {
   if (!a) return;
   state.editing = name;
   $('eName').value = a.name;
+  $('eName').classList.remove('invalid');
   $('eTarget').value = a.target || a.script || '';
   $('eCwd').value = a.cwd || '';
   $('ePort').value = a.port || '';
@@ -559,20 +560,51 @@ function closeEdit() {
   state.editing = null;
 }
 
-['eTarget', 'eCwd', 'ePort', 'eArgs'].forEach((id) => $(id).addEventListener('input', previewCmd));
+/** 名称是否合法：非空、不含空格/斜杠、不以 - 开头 */
+const nameInvalid = (v) => !v || /[\s/]/.test(v) || v.startsWith('-');
+
+/** 名称查重：改名时不能和其他任务撞名（和自己重名不算） */
+function nameDuplicate(v) {
+  if (!v || v === state.editing) return false;
+  return (state.apps || []).some((a) => a.name === v);
+}
+
+/** 编辑过程中即时报错：名称非法或重复时输入框标红（沿用原名不校验格式） */
+function validateNameInput() {
+  const v = $('eName').value.trim();
+  const bad = v !== '' && v !== state.editing && (nameInvalid(v) || nameDuplicate(v));
+  $('eName').classList.toggle('invalid', bad);
+  return !bad;
+}
+
+['eName', 'eTarget', 'eCwd', 'ePort', 'eArgs'].forEach((id) => $(id).addEventListener('input', previewCmd));
+$('eName').addEventListener('input', validateNameInput);
 $('cancelEdit').addEventListener('click', closeEdit);
 $('editMask').addEventListener('click', (e) => { if (e.target.id === 'editMask') closeEdit(); });
 
 $('confirmEdit').addEventListener('click', async () => {
   if (!state.editing) return;
   const btn = $('confirmEdit');
+  const from = state.editing;
+  const name = $('eName').value.trim();
+
+  if (!name) return toast(t('toast.nameRequired'), 'err');
+  if (name !== from && nameInvalid(name)) return toast(t('toast.nameInvalid'), 'err');
+  if (nameDuplicate(name)) return toast(t('toast.nameExists', { name }), 'err');
   if (!$('eTarget').value.trim()) return toast(t('toast.targetRequired'), 'err');
+
+  // 改名会按新名字重建 pm2 进程，先让用户知情
+  const cur = (state.apps || []).find((a) => a.name === from);
+  if (name !== from && cur && cur.state !== 'missing'
+    && !confirm(t('toast.renameRestartConfirm', { from, to: name }))) return;
+
   btn.disabled = true;
   try {
-    const res = await fetch(api(`/api/apps/${encodeURIComponent(state.editing)}`), {
+    const res = await fetch(api(`/api/apps/${encodeURIComponent(from)}`), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        name,
         target: $('eTarget').value.trim(),
         cwd: $('eCwd').value.trim(),
         port: $('ePort').value.trim(),
@@ -582,7 +614,8 @@ $('confirmEdit').addEventListener('click', async () => {
     });
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
-    toast(t('toast.defSaved'), 'ok');
+    toast(name === from ? t('toast.defSaved') : t('toast.renamed', { from, to: name }), 'ok');
+    if (j.warning) toast(j.warning, 'err');
     closeEdit();
     await load();
   } catch (e) {

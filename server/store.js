@@ -135,6 +135,23 @@ function remove(name) {
   return true;
 }
 
+/**
+ * 重命名一条定义：保留创建时间等元信息，只换键名。
+ * 只管任务清单，pm2 里的进程由调用方（API 层）先删后建。
+ * @returns {'ok'|'missing'|'duplicate'}
+ */
+function rename(oldName, newName) {
+  if (!oldName || !newName || oldName === newName) return 'ok';
+  const s = load();
+  const prev = s.apps[oldName];
+  if (!prev) return 'missing';
+  if (s.apps[newName]) return 'duplicate';
+  delete s.apps[oldName];
+  s.apps[newName] = normalize({ ...prev, name: newName, updatedAt: Date.now() });
+  persist();
+  return 'ok';
+}
+
 /** 轻量打点，不参与「是否被用户编辑过」的判定 */
 function touch(name, patch = {}) {
   const s = load();
@@ -294,6 +311,7 @@ module.exports = {
   get,
   upsert,
   remove,
+  rename,
   touch,
   harvest,
   effectiveArgs,
