@@ -552,6 +552,7 @@ function openEdit(name) {
   $('eNote').value = a.note || '';
   previewCmd();
   $('editMask').hidden = false;
+  $('editMask').querySelector('.modal-body').scrollTop = 0;
   $('eTarget').focus();
 }
 
@@ -757,6 +758,7 @@ function renderUpdateModal() {
 function openUpdate() {
   $('uLog').hidden = !$('uLog').textContent;
   $('updateMask').hidden = false;
+  $('updateMask').querySelector('.modal-body').scrollTop = 0;
   renderUpdateModal();
   if (!state.update) checkUpdate(true);
 }
@@ -904,7 +906,11 @@ $('drawerMask').addEventListener('click', closeLogs);
 $('clearLog').addEventListener('click', () => { $('logView').textContent = ''; });
 $('liveLog').addEventListener('change', startLogStream);
 
-$('addBtn').addEventListener('click', () => { $('modalMask').hidden = false; $('fTarget').focus(); });
+$('addBtn').addEventListener('click', () => {
+  $('modalMask').hidden = false;
+  $('modalMask').querySelector('.modal-body').scrollTop = 0;
+  $('fTarget').focus();
+});
 $('cancelAdd').addEventListener('click', () => { $('modalMask').hidden = true; });
 $('modalMask').addEventListener('click', (e) => { if (e.target.id === 'modalMask') $('modalMask').hidden = true; });
 

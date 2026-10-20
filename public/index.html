@@ -104,14 +104,16 @@
 <div class="modal-mask" id="modalMask" hidden>
   <div class="modal">
     <h3 data-i18n="add.title">启动新进程</h3>
-    <p class="muted small" data-i18n-html="add.desc">使用 <code>pm2 start</code> 启动一个脚本或 ecosystem 配置文件。</p>
-    <label><span data-i18n="add.target">脚本 / 配置文件路径</span><input id="fTarget" data-i18n-placeholder="add.targetPh" placeholder="/绝对路径/app.js 或 ecosystem.config.js" /></label>
-    <label><span data-i18n="add.name">进程名称（可选）</span><input id="fName" placeholder="my-app" /></label>
-    <label><span data-i18n="add.cwd">工作目录（可选）</span><input id="fCwd" data-i18n-placeholder="add.cwdPh" placeholder="/绝对路径/project" /></label>
-    <label><span data-i18n="add.port">端口（可选，会以 --port 传入）</span><input id="fPort" placeholder="3000" /></label>
-    <label><span data-i18n="add.args">脚本参数（可选，每行一个；填了就以它为准）</span>
-      <textarea id="fArgs" rows="2" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
-    </label>
+    <div class="modal-body">
+      <p class="muted small" data-i18n-html="add.desc">使用 <code>pm2 start</code> 启动一个脚本或 ecosystem 配置文件。</p>
+      <label><span data-i18n="add.target">脚本 / 配置文件路径</span><input id="fTarget" data-i18n-placeholder="add.targetPh" placeholder="/绝对路径/app.js 或 ecosystem.config.js" /></label>
+      <label><span data-i18n="add.name">进程名称（可选）</span><input id="fName" placeholder="my-app" /></label>
+      <label><span data-i18n="add.cwd">工作目录（可选）</span><input id="fCwd" data-i18n-placeholder="add.cwdPh" placeholder="/绝对路径/project" /></label>
+      <label><span data-i18n="add.port">端口（可选，会以 --port 传入）</span><input id="fPort" placeholder="3000" /></label>
+      <label><span data-i18n="add.args">脚本参数（可选，每行一个；填了就以它为准）</span>
+        <textarea id="fArgs" rows="2" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
+      </label>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelAdd" data-i18n="common.cancel">取消</button>
       <button class="btn primary" id="confirmAdd" data-i18n="common.start">启动</button>
@@ -123,16 +125,18 @@
 <div class="modal-mask" id="editMask" hidden>
   <div class="modal">
     <h3 data-i18n="edit.title">编辑任务参数</h3>
-    <p class="muted small" data-i18n-html="edit.desc">这就是「恢复启动」时会执行的 <code>pm2 start</code> 内容。改过的任务会被标记为「已校对」，pm2 的自动收割不再覆盖它。</p>
-    <label><span data-i18n="edit.name">进程名称</span><input id="eName" placeholder="my-app" /></label>
-    <label><span data-i18n="edit.target">脚本 / 配置文件路径</span><input id="eTarget" data-i18n-placeholder="edit.targetPh" placeholder="/绝对路径/app.js" /></label>
-    <label><span data-i18n="edit.cwd">工作目录（可选）</span><input id="eCwd" data-i18n-placeholder="add.cwdPh" placeholder="/绝对路径/project" /></label>
-    <label><span data-i18n="edit.port">端口（可选，会以 --port 传入）</span><input id="ePort" placeholder="3000" /></label>
-    <label><span data-i18n="edit.args">脚本参数（可选，每行一个，按顺序传入）</span>
-      <textarea id="eArgs" rows="3" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
-    </label>
-    <label><span data-i18n="edit.note">备注（可选）</span><input id="eNote" data-i18n-placeholder="edit.notePh" placeholder="这个任务是干嘛的" /></label>
-    <div class="cmd-preview" id="ePreview"></div>
+    <div class="modal-body">
+      <p class="muted small" data-i18n-html="edit.desc">这就是「恢复启动」时会执行的 <code>pm2 start</code> 内容。改过的任务会被标记为「已校对」，pm2 的自动收割不再覆盖它。</p>
+      <label><span data-i18n="edit.name">进程名称</span><input id="eName" placeholder="my-app" /></label>
+      <label><span data-i18n="edit.target">脚本 / 配置文件路径</span><input id="eTarget" data-i18n-placeholder="edit.targetPh" placeholder="/绝对路径/app.js" /></label>
+      <label><span data-i18n="edit.cwd">工作目录（可选）</span><input id="eCwd" data-i18n-placeholder="add.cwdPh" placeholder="/绝对路径/project" /></label>
+      <label><span data-i18n="edit.port">端口（可选，会以 --port 传入）</span><input id="ePort" placeholder="3000" /></label>
+      <label><span data-i18n="edit.args">脚本参数（可选，每行一个，按顺序传入）</span>
+        <textarea id="eArgs" rows="3" placeholder="-c&#10;cd /Users/me &amp;&amp; ./run.sh"></textarea>
+      </label>
+      <label><span data-i18n="edit.note">备注（可选）</span><input id="eNote" data-i18n-placeholder="edit.notePh" placeholder="这个任务是干嘛的" /></label>
+      <div class="cmd-preview" id="ePreview"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelEdit" data-i18n="common.cancel">取消</button>
       <button class="btn primary" id="confirmEdit" data-i18n="common.save">保存</button>
@@ -146,25 +150,27 @@
 <div class="modal-mask" id="updateMask" hidden>
   <div class="modal lg">
     <h3 data-i18n="update.title">版本与更新</h3>
-    <p class="muted small" id="uStatus" data-i18n="update.checking">正在检查最新版本…</p>
+    <div class="modal-body">
+      <p class="muted small" id="uStatus" data-i18n="update.checking">正在检查最新版本…</p>
 
-    <div class="ver-grid">
-      <div class="ver-cell">
-        <span class="k" data-i18n="update.current">当前版本</span>
-        <b id="uCurrent">—</b>
+      <div class="ver-grid">
+        <div class="ver-cell">
+          <span class="k" data-i18n="update.current">当前版本</span>
+          <b id="uCurrent">—</b>
+        </div>
+        <div class="ver-cell">
+          <span class="k" data-i18n="update.latest">最新版本</span>
+          <b id="uLatest">—</b>
+        </div>
+        <div class="ver-cell wide">
+          <span class="k" data-i18n="update.mode">安装方式</span>
+          <b id="uMode">—</b>
+        </div>
       </div>
-      <div class="ver-cell">
-        <span class="k" data-i18n="update.latest">最新版本</span>
-        <b id="uLatest">—</b>
-      </div>
-      <div class="ver-cell wide">
-        <span class="k" data-i18n="update.mode">安装方式</span>
-        <b id="uMode">—</b>
-      </div>
+
+      <div class="cmd-preview" id="uPlan"></div>
+      <pre class="update-log" id="uLog" hidden></pre>
     </div>
-
-    <div class="cmd-preview" id="uPlan"></div>
-    <pre class="update-log" id="uLog" hidden></pre>
 
     <div class="modal-actions">
       <button class="btn ghost" id="uCheck" data-i18n="update.recheck">重新检查</button>
