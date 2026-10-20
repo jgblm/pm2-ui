@@ -184,6 +184,19 @@ async function startDefinition(def, lang) {
   return applyArgs(toPm2Args(def, lang), 45000, lang);
 }
 
+/**
+ * 按定义重建进程：先 `pm2 delete` 掉旧条目，再用清单里的参数启动。
+ * `pm2 restart/start <name>` 只会复用守护进程内存里的旧启动参数，
+ * 所以面板上编辑过的命令必须先删后建才会生效。
+ */
+async function rebuildFromDefinition(def, lang) {
+  if (def && def.name) {
+    // 删不掉（本来就不存在）不影响后续启动
+    await run(['delete', String(def.name), '--silent'], { timeout: 20000 });
+  }
+  return startDefinition(def, lang);
+}
+
 /* ------------------ 列表持久化：save / resurrect ------------------ */
 
 /** 把当前进程列表写入 dump.pm2，供守护进程重启后恢复 */
@@ -243,6 +256,7 @@ module.exports = {
   getPm2Bin,
   applyArgs,
   startDefinition,
+  rebuildFromDefinition,
   save,
   resurrect,
   dumpInfo,

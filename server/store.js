@@ -246,6 +246,29 @@ function toPm2Args(def, lang) {
   return args;
 }
 
+/**
+ * 保存的定义与 pm2 里正在跑的进程是否已经对不上。
+ * 对不上时不能走 `pm2 restart/start <name>` —— 那只会照搬守护进程内存里的旧参数，
+ * 必须按定义重建进程，用户编辑过的命令才会真正生效。
+ *
+ * 只比较"用户能改、改了必须重建"的字段：脚本参数、入口文件名、解释器。
+ * 进程里存的是绝对路径而定义的 target 可能是相对路径，所以入口只比文件名。
+ */
+function needsRebuild(def, live) {
+  if (!def || !live) return false;
+  const nextArgs = effectiveArgs(def);
+  const liveArgs = Array.isArray(live.args) ? live.args.map(str) : [];
+  if (JSON.stringify(nextArgs) !== JSON.stringify(liveArgs)) return true;
+
+  const base = (s) => path.basename(str(s || '')).toLowerCase();
+  const target = def.target || def.script;
+  if (target && live.script && base(target) !== base(live.script)) return true;
+
+  if (def.interpreter && live.interpreter && str(def.interpreter) !== str(live.interpreter)) return true;
+
+  return false;
+}
+
 /** 便于界面展示的可读命令 */
 function describeCommand(def) {
   const q = (s) => (/[\s"'$`\\|&;<>()*?[\]{}!#~]/.test(s) ? JSON.stringify(s) : s);
@@ -273,6 +296,8 @@ module.exports = {
   remove,
   touch,
   harvest,
+  effectiveArgs,
+  needsRebuild,
   toPm2Args,
   describeCommand,
   reset,

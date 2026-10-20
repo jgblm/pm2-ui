@@ -194,8 +194,8 @@ app.post('/api/processes/:name/:action', async (req, res) => {
   const def = store.get(name);
   try {
     const list = await pm2.rawList(req.lang);
-    const exists = list.some((p) => (p.pm2_env?.name || p.name) === name);
-    if (!exists) {
+    const liveRaw = list.find((p) => (p.pm2_env?.name || p.name) === name);
+    if (!liveRaw) {
       // pm2 已经不认这个进程了：如果任务清单里有它，引导用户走"恢复启动"
       if (def) {
         return res.status(404).json({
@@ -206,7 +206,15 @@ app.post('/api/processes/:name/:action', async (req, res) => {
       }
       return res.status(404).json({ ok: false, error: t('api.processNotFound', { name }) });
     }
-    await pm2.action(name, action, req.lang);
+
+    // 启动 / 重启：pm2 只会照搬它内存里的旧参数，任务清单里的定义若已经和
+    // 正在跑的进程不一致（比如刚在卡片上编辑过命令），必须先删后建才生效。
+    const rebuild = ['start', 'restart'].includes(action)
+      && store.needsRebuild(def, fmtProcess(liveRaw, {}));
+
+    if (rebuild) await pm2.rebuildFromDefinition(def, req.lang);
+    else await pm2.action(name, action, req.lang);
+
     invalidate();
     autoSave();
     if (def) store.touch(name, { lastStatus: action === 'stop' ? 'stopped' : def.lastStatus });
