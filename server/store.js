@@ -33,7 +33,7 @@ let cache = null;
 /* ------------------------------ 基础读写 ------------------------------ */
 
 function empty() {
-  return { version: VERSION, updatedAt: Date.now(), apps: {} };
+  return { version: VERSION, updatedAt: Date.now(), order: [], apps: {} };
 }
 
 function str(v) {
@@ -73,7 +73,8 @@ function load() {
     for (const a of list) {
       if (a && a.name) apps[String(a.name)] = normalize(a);
     }
-    cache = { version: VERSION, updatedAt: Number(raw.updatedAt) || Date.now(), apps };
+    const order = Array.isArray(raw.order) ? raw.order.map(str).filter(Boolean) : [];
+    cache = { version: VERSION, updatedAt: Number(raw.updatedAt) || Date.now(), order, apps };
   } catch (_) {
     cache = empty();
   }
@@ -95,10 +96,52 @@ function persist() {
 
 /* ------------------------------ 对外接口 ------------------------------ */
 
-/** 全部定义，按名称排序 */
+/**
+ * 全部定义，按用户拖出来的顺序排序。
+ * 没进过排序表的（新收录的任务）排在后面，内部再按名称排。
+ */
 function list() {
   const s = load();
-  return Object.values(s.apps).sort((a, b) => a.name.localeCompare(b.name));
+  const idx = new Map(s.order.map((name, i) => [name, i]));
+  return Object.values(s.apps).sort((a, b) => {
+    const ia = idx.has(a.name) ? idx.get(a.name) : -1;
+    const ib = idx.has(b.name) ? idx.get(b.name) : -1;
+    if (ia === ib) return a.name.localeCompare(b.name);
+    if (ia < 0) return 1;
+    if (ib < 0) return -1;
+    return ia - ib;
+  });
+}
+
+/**
+ * 保存显示顺序：传入的名字按给的次序排前面，没提到的任务接着排在后面。
+ *
+ * 之所以不是「整表覆盖」：前端在某些时刻只认识部分任务（刚启动、筛选视图、
+ * 数据还没拉全），整表覆盖会让剩下的任务全部变成「未排序」而被按名字重排，
+ * 用户就会看到「拖完几秒后又跳回去」。
+ *
+ * @param {string[]} names
+ * @returns {string[]} 实际落盘的名字数组
+ */
+function setOrder(names) {
+  const s = load();
+  const seen = new Set();
+  const next = [];
+  for (const n of Array.isArray(names) ? names : []) {
+    const name = str(n);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    next.push(name);
+  }
+
+  // 没提到的任务：沿用它们原先的相对次序；从没排过序的按名称补在后面
+  const rest = s.order.filter((n) => !seen.has(n));
+  const restSet = new Set(rest);
+  const fresh = Object.keys(s.apps).filter((n) => !seen.has(n) && !restSet.has(n)).sort();
+
+  s.order = next.concat(rest, fresh);
+  persist();
+  return s.order;
 }
 
 function get(name) {
@@ -131,6 +174,7 @@ function remove(name) {
   const s = load();
   if (!s.apps[name]) return false;
   delete s.apps[name];
+  s.order = s.order.filter((n) => n !== name);
   persist();
   return true;
 }
@@ -148,6 +192,8 @@ function rename(oldName, newName) {
   if (s.apps[newName]) return 'duplicate';
   delete s.apps[oldName];
   s.apps[newName] = normalize({ ...prev, name: newName, updatedAt: Date.now() });
+  // 排序表跟着改名走，别让任务跳到列表末尾
+  s.order = s.order.map((n) => (n === oldName ? newName : n));
   persist();
   return 'ok';
 }
@@ -308,6 +354,7 @@ module.exports = {
   FILE,
   DATA_DIR,
   list,
+  setOrder,
   get,
   upsert,
   remove,

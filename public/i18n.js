@@ -69,6 +69,8 @@
       'common.viewList': '列表视图',
       'common.viewCard': '卡片视图',
       'common.logsUnavailable': '该任务当前不在 pm2 中，没有日志可读',
+      'common.dragToSort': '拖动排序',
+      'common.orderSaveFailed': '排序保存失败：{error}',
 
       'search.placeholder': '搜索进程名、脚本路径、端口…',
 
@@ -260,6 +262,8 @@
       'common.viewList': 'List view',
       'common.viewCard': 'Card view',
       'common.logsUnavailable': 'This app is not in pm2 right now, so there are no logs to read',
+      'common.dragToSort': 'Drag to reorder',
+      'common.orderSaveFailed': 'Failed to save the order: {error}',
 
       'search.placeholder': 'Search name, script path, port…',
 

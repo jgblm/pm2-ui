@@ -25,6 +25,11 @@ const state = {
   logStream: null,
   logTarget: null,
   editing: null,           // 正在编辑的任务名
+  order: [],               // 任务显示顺序（服务端持久化）
+  dragName: null,          // 正在拖动的任务名
+  orderSaving: 0,          // 正在保存排序的请求数
+  loadSeq: 0,              // 刷新请求序号
+  orderSeq: 0,             // 顺序最后一次本地变更时，已经发出的刷新请求数
   update: null,            // 版本 / 更新检查结果
   updateAutoCheck: true,   // 服务端是否允许自动检查更新
   updateChecked: false,
@@ -71,6 +76,7 @@ const statusText = (s) => (STATUS_KEY[s] ? t(STATUS_KEY[s]) : s);
 /* ------------------------------ 数据 ------------------------------ */
 
 async function load({ silent = false } = {}) {
+  const seq = ++state.loadSeq;
   try {
     const q = '?refresh=' + (silent ? '0' : '1');
     const [pRes, oRes, aRes] = await Promise.all([
@@ -93,6 +99,15 @@ async function load({ silent = false } = {}) {
     state.overview = oRes;
     state.processes = pRes.processes || [];
     state.apps = aRes.apps || [];
+    // 排序之前就发出的请求，响应里带的是旧顺序 —— 套上去会闪一下，直接丢掉
+    const fresh = seq > state.orderSeq;
+    if (Array.isArray(aRes.order) && !state.orderSaving && fresh) {
+      state.order = aRes.order;
+      // 服务端顺序表漏了任务时补一次，否则这些任务会一直掉到末尾（历史数据 / 部分写入）
+      const known = new Set(aRes.order);
+      const missing = buildTasks().map((x) => x.name).filter((n) => !known.has(n));
+      if (missing.length) saveOrder(aRes.order.concat(missing));
+    }
     if (oRes.update) applyUpdateInfo(oRes.update);
 
     if (oRes.error) toast(t('pm2.readFailed', { error: oRes.error }), 'err');
@@ -138,7 +153,19 @@ function buildTasks() {
     cur.app = a;
     map.set(a.name, cur);
   }
-  return [...map.values()];
+
+  const tasks = [...map.values()];
+  // 按用户拖出来的顺序排；没排过的（新任务）留在末尾，保持原有相对次序
+  if (state.order.length) {
+    const idx = new Map(state.order.map((name, i) => [name, i]));
+    const rank = (name) => (idx.has(name) ? idx.get(name) : Infinity);
+    tasks.sort((x, y) => {
+      const a = rank(x.name);
+      const b = rank(y.name);
+      return a === b ? 0 : (a < b ? -1 : 1);
+    });
+  }
+  return tasks;
 }
 
 /** 任务状态：以 pm2 实时状态为准；pm2 已经不认的任务记为 missing */
@@ -241,6 +268,9 @@ function portBlock(p) {
 }
 
 function render() {
+  // 拖动过程中不重画：3 秒一次的自动刷新会把拖到一半的卡片冲掉
+  if (state.dragName) return;
+
   const grid = $('grid');
   const tasks = buildTasks();
   const list = tasks.filter(taskMatches);
@@ -310,6 +340,14 @@ function taskPills(task) {
   return out.join('');
 }
 
+/** 拖动手柄：只有从它按下才能拖动排序，避免误触按钮和选中文字 */
+function dragHandle() {
+  const label = esc(t('common.dragToSort'));
+  return `<span class="drag-handle" title="${label}" aria-label="${label}">
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M8 5h2v2H8zM14 5h2v2h-2zM8 9h2v2H8zM14 9h2v2h-2zM8 13h2v2H8zM14 13h2v2h-2zM8 17h2v2H8zM14 17h2v2h-2z" fill="currentColor"/></svg>
+  </span>`;
+}
+
 /** 列表视图：一行一个任务 */
 function renderTaskRow(task) {
   const { name, proc: p, app: a } = task;
@@ -326,6 +364,7 @@ function renderTaskRow(task) {
 
   return `
   <div class="task-row ${running ? '' : 'is-stopped'}" data-name="${esc(name)}">
+    ${dragHandle()}
     <span class="status-dot ${esc(taskStatus(task))}"></span>
     <div class="task-main">
       <div class="task-name"><b>${esc(name)}</b>${taskPills(task)}</div>
@@ -347,6 +386,7 @@ function renderTaskCard(task) {
     return `
     <article class="card is-missing" data-name="${esc(name)}">
       <div class="card-head">
+        ${dragHandle()}
         <span class="status-dot missing"></span>
         <div style="min-width:0">
           <div class="card-title">${esc(name)}</div>
@@ -374,6 +414,7 @@ function renderTaskCard(task) {
   return `
   <article class="card ${running ? '' : 'is-stopped'}" data-name="${esc(p.name)}">
     <div class="card-head">
+      ${dragHandle()}
       <span class="status-dot ${esc(p.status)}"></span>
       <div style="min-width:0">
         <div class="card-title">${esc(p.name)}</div>
@@ -408,6 +449,182 @@ function renderTaskCard(task) {
     </div>
   </article>`;
 }
+
+/* --------------------------- 拖动排序 --------------------------- */
+
+/**
+ * 把可见任务的顺序合并回完整顺序：
+ * 被筛选隐藏的任务保持原位，参与拖动的任务按新顺序填回它们原本占的位置。
+ */
+function commitOrder(visible) {
+  const full = buildTasks().map((x) => x.name);
+  // 只填回「当前还存在的任务」：拖动期间任务被删除 / 新增时两边集合对不上，直接对应会错位
+  const known = new Set(full);
+  const seen = new Set();
+  // 去重 + 只保留当前存在的任务：拿到的顺序里混进按钮、重复项时也不会把结果算歪
+  const moved = visible.filter((name) => {
+    if (!known.has(name) || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+  const movedSet = new Set(moved);
+  let i = 0;
+  const next = full.map((name) => (movedSet.has(name) ? moved[i++] : name));
+
+  // 数据暂时不全（这一秒只拿到部分任务）时，别把还没出现的任务从顺序表里丢掉
+  const kept = new Set(next);
+  for (const name of state.order) {
+    if (!known.has(name) && !kept.has(name)) { kept.add(name); next.push(name); }
+  }
+
+  state.order = next;
+  // 此刻在飞的刷新请求都是排序前发出的，别让它们的旧顺序覆盖回来
+  state.orderSeq = state.loadSeq;
+  return next;
+}
+
+async function saveOrder(order) {
+  state.orderSaving++;
+  try {
+    const j = await post(api('/api/apps/order'), { order });
+    if (!j.ok) throw new Error(j.error || t('common.fail'));
+    if (Array.isArray(j.order)) {
+      // 服务端回来的顺序和提交的不一样，说明落盘时被改写了，留个痕迹方便排查
+      if (j.order.join('\n') !== order.join('\n')) {
+        console.warn('[pm2-ui] 排序回写不一致', { sent: order, got: j.order });
+      }
+      state.order = j.order;
+    }
+    // 落盘之前发出的刷新请求同样带的是旧顺序
+    state.orderSeq = state.loadSeq;
+  } catch (e) {
+    toast(t('common.orderSaveFailed', { error: e.message }), 'err');
+  } finally {
+    state.orderSaving--;
+  }
+}
+
+/**
+ * 任务元素（卡片 / 列表行）的定位选择器。
+ * 注意不能只写 `[data-name]`：卡片内的操作按钮也带 data-name，
+ * 那样查出来的"顺序"会混进一堆按钮，提交上去的顺序就是错的。
+ */
+const ITEM_SEL = '.card[data-name], .task-row[data-name]';
+
+/** 网格里的任务元素，按 DOM 顺序 */
+const gridItems = () => [...$('grid').children].filter((el) => el.matches(ITEM_SEL));
+
+/**
+ * FLIP：先量旧位置，再改 DOM，然后让被挤开的卡片从旧位置滑到新位置。
+ * 不这么做的话每跨过一次中点，卡片就是硬跳一下，手感很顿。
+ */
+function flipMove(mutate, skip) {
+  const items = gridItems().filter((el) => el !== skip);
+  // 用 offset 而不是 rect：rect 会带上上一次动画残留的 transform，连续换位时会算错位移
+  const before = items.map((el) => ({ x: el.offsetLeft, y: el.offsetTop }));
+
+  mutate();
+
+  items.forEach((el, i) => {
+    const dx = before[i].x - el.offsetLeft;
+    const dy = before[i].y - el.offsetTop;
+    if (!dx && !dy) return;
+
+    el.classList.add('flipping');
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+    requestAnimationFrame(() => { el.style.transform = ''; });
+    clearTimeout(el._flipTimer);
+    el._flipTimer = setTimeout(() => {
+      el.classList.remove('flipping');
+      el.style.transform = '';
+    }, 260);
+  });
+}
+
+/* 不用原生 HTML5 拖放（draggable + dragstart/dragover）了：
+   那套东西在部分环境里只有拖影在动、卡片本身没换位，松手后写回的仍是旧顺序。
+   这里改用 pointer 事件自己实现：卡片直接 transform 跟手，命中判定用 elementFromPoint，
+   换位立刻落到 DOM 上，松手时读到的顺序就是用户看到的顺序。 */
+
+const DRAG_THRESHOLD = 4;
+let drag = null;   // { el, name, pointerId, startX, startY, grabDX, grabDY, started }
+
+/** 把拖动中的卡片摆到指针位置（先清 transform 量 layout，避免误差累积） */
+function followPointer(d, x, y) {
+  d.el.style.transform = '';
+  const r = d.el.getBoundingClientRect();
+  d.el.style.transform = `translate(${x - d.grabDX - r.left}px, ${y - d.grabDY - r.top}px)`;
+}
+
+$('grid').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const handle = e.target.closest && e.target.closest('.drag-handle');
+  const el = handle && handle.closest(ITEM_SEL);
+  if (!el) return;
+
+  const r = el.getBoundingClientRect();
+  drag = {
+    el,
+    name: el.dataset.name,
+    pointerId: e.pointerId,
+    startX: e.clientX,
+    startY: e.clientY,
+    grabDX: e.clientX - r.left,
+    grabDY: e.clientY - r.top,
+    started: false,
+  };
+  e.preventDefault();   // 别触发原生拖拽 / 选中文字
+});
+
+document.addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+
+  if (!drag.started) {
+    const moved = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+    if (moved < DRAG_THRESHOLD) return;
+    drag.started = true;
+    drag.el.classList.add('dragging');
+    state.dragName = drag.name;   // 拖动期间冻结重绘
+  }
+
+  e.preventDefault();
+  followPointer(drag, e.clientX, e.clientY);
+
+  // 拖动中的卡片设了 pointer-events:none，这里拿到的是它底下那张卡
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const target = under && under.closest && under.closest(ITEM_SEL);
+  if (!target || target === drag.el) return;
+
+  // 落到哪张卡上，就占哪张卡的位置（目标卡让位），跟鼠标在卡内偏左偏右无关
+  const items = gridItems();
+  const from = items.indexOf(drag.el);
+  const to = items.indexOf(target);
+  if (from < 0 || to < 0 || from === to) return;
+
+  flipMove(() => (from > to ? target.before(drag.el) : target.after(drag.el)), drag.el);
+  followPointer(drag, e.clientX, e.clientY);   // 换位后 layout 变了，重新贴一次指针
+}, { passive: false });
+
+function endDrag() {
+  const d = drag;
+  drag = null;
+  if (!d) return;
+
+  d.el.classList.remove('dragging');
+  d.el.style.transform = '';
+  if (!d.started) return;   // 只是点了一下手柄，不算拖动
+  state.dragName = null;
+
+  const names = gridItems().map((el) => el.dataset.name);
+  const before = state.order.join('\n');
+  const next = commitOrder(names);
+  // 顺序真的变了才回写，原地放下不用打一次请求
+  if (next.join('\n') !== before) saveOrder(next);
+}
+
+document.addEventListener('pointerup', endDrag);
+document.addEventListener('pointercancel', endDrag);
+window.addEventListener('blur', endDrag);
 
 /* ------------------------------ 操作 ------------------------------ */
 

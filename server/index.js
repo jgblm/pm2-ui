@@ -315,7 +315,24 @@ app.get('/api/apps', async (req, res) => {
     };
   });
 
-  res.json({ ok: true, apps, error, autosave: AUTOSAVE, serverTime: Date.now() });
+  res.json({
+    ok: true,
+    apps,
+    order: apps.map((a) => a.name),   // 用户拖出来的显示顺序
+    error,
+    autosave: AUTOSAVE,
+    serverTime: Date.now(),
+  });
+});
+
+/** 保存拖动排序后的显示顺序 */
+app.post('/api/apps/order', (req, res) => {
+  const order = req.body && req.body.order;
+  if (!Array.isArray(order)) {
+    return res.status(400).json({ ok: false, error: req.t('api.invalidOrder') });
+  }
+  const saved = store.setOrder(order);
+  res.json({ ok: true, order: saved });
 });
 
 /** 新增 / 编辑任务定义。编辑过的会被标记为 manual，pm2 自动收割不再覆盖参数 */
